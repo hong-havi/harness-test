@@ -32,3 +32,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# ─── Agent / Tool local state ────────────────────────────
+.claude/

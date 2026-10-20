@@ -39,14 +39,16 @@ usage() {
 Usage: $0 <command> [args]
 
 Commands:
-  new <slug>           Create new task + worktree + branch
-  list                 Show active tasks
-  advance [task-id]    Move current_role to next required role
-  merge [task-id]      Rebase + ff-only merge to main + cleanup
-  drop [task-id]       Archive and remove worktree/branch
-  show [task-id]       Print task summary
+  new <slug> [--no-spawn]       Create task + worktree + branch (planner 자동 spawn)
+  list                          Show active tasks
+  advance [task-id] [--no-spawn] Move current_role to next, auto-spawn 다음 agent
+  merge [task-id]               Rebase + ff-only merge to main + cleanup
+  drop [task-id]                Archive and remove worktree/branch
+  show [task-id]                Print task summary
+  spawn [task-id] [role]        현재 또는 지정 역할 agent 재spawn (디버깅)
 
 worktree 내부에서 실행하면 task-id 자동 감지.
+--no-spawn: 자동 agent spawn 비활성 (Phase 1 수동 모드와 동일).
 EOF
 }
 
@@ -149,7 +151,15 @@ get_fm() {
 # ─────────────────────────────────────────────────────────────────────
 
 cmd_new() {
-  local slug="${1:-}"
+  local slug=""
+  local no_spawn=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-spawn) no_spawn=1; shift ;;
+      -*) die "Unknown flag: $1" ;;
+      *) slug="$1"; shift ;;
+    esac
+  done
   [[ -n "$slug" ]] || die "slug 가 필요합니다. 예: $0 new signup-api"
   [[ "$slug" =~ ^[a-z0-9-]+$ ]] || die "slug 는 kebab-case 소문자+숫자+하이픈만 허용"
 
@@ -226,9 +236,17 @@ cmd_new() {
   "$SCRIPT_DIR/chat.sh" append "$id" harness tasks note "task $id ($slug) created" >/dev/null
 
   info ""
-  info "완료. 다음 단계:"
-  info "  cd $wt_rel"
-  info "  ./scripts/role.sh planner"
+  if [[ $no_spawn -eq 1 ]]; then
+    info "완료 (--no-spawn). 다음 단계 수동:"
+    info "  cd $wt_rel"
+    info "  ./scripts/role.sh planner"
+  else
+    info "완료. planner agent 를 자동으로 spawn 합니다..."
+    "$SCRIPT_DIR/orca/spawn.sh" "$id" planner || {
+      info "⚠ spawn 실패. 수동으로 진행:"
+      info "  cd $wt_rel && ./scripts/role.sh planner"
+    }
+  fi
 }
 
 cmd_list() {
@@ -259,8 +277,17 @@ cmd_list() {
 # required_roles 리스트에서 current_role 다음 역할 찾기
 # task.md 를 파싱 — "- { role: xxx, agent: yyy }" 패턴
 cmd_advance() {
+  local given_id=""
+  local no_spawn=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-spawn) no_spawn=1; shift ;;
+      -*) die "Unknown flag: $1" ;;
+      *) given_id="$1"; shift ;;
+    esac
+  done
   local id
-  id="$(resolve_task_id "${1:-}")"
+  id="$(resolve_task_id "$given_id")"
   local f
   f="$(task_file "$id")"
 
@@ -306,6 +333,23 @@ cmd_advance() {
   info "$id: current_role $current → $next"
 
   "$SCRIPT_DIR/chat.sh" append "$id" "$current" "$next" handoff "advance: $current → $next" >/dev/null
+
+  if [[ $no_spawn -eq 1 ]]; then
+    info "(--no-spawn: 다음 agent 는 수동으로 spawn 하세요)"
+  else
+    info "다음 agent 를 자동으로 spawn 합니다..."
+    "$SCRIPT_DIR/orca/spawn.sh" "$id" "$next" || {
+      info "⚠ spawn 실패. 수동으로 진행:"
+      info "  ./scripts/role.sh $next $id"
+    }
+  fi
+}
+
+cmd_spawn() {
+  local id
+  id="$(resolve_task_id "${1:-}")"
+  local role="${2:-}"
+  "$SCRIPT_DIR/orca/spawn.sh" "$id" "$role"
 }
 
 cmd_merge() {
@@ -413,6 +457,7 @@ case "$cmd" in
   merge)    cmd_merge "$@" ;;
   drop)     cmd_drop "$@" ;;
   show)     cmd_show "$@" ;;
+  spawn)    cmd_spawn "$@" ;;
   ""|-h|--help|help) usage ;;
   *) usage; exit 1 ;;
 esac

@@ -71,17 +71,43 @@ task 번호 N에 대해:
 
 ## 명령어
 
+### 최초 1회 (Orca 환경)
+
+```bash
+./scripts/orca/setup.sh                    # external-worktree-visibility: show
+```
+
 ### Task 라이프사이클
 
 ```bash
-./scripts/tasks.sh new <slug>              # worktree + 브랜치 + task.md 생성
+./scripts/tasks.sh new <slug>              # worktree + 브랜치 + task.md + planner 자동 spawn
+./scripts/tasks.sh new <slug> --no-spawn   # agent spawn 없이
 ./scripts/tasks.sh list                    # 활성 task 테이블
-./scripts/tasks.sh advance [task-id]       # current_role 다음 required_role로
+./scripts/tasks.sh advance [task-id]       # 다음 역할 + 자동 spawn
+./scripts/tasks.sh advance [task-id] --no-spawn  # 커서만 이동
+./scripts/tasks.sh spawn [task-id] [role]  # 현재/지정 역할 재 spawn (디버깅)
 ./scripts/tasks.sh merge [task-id]         # rebase + ff-only → main + cleanup
-./scripts/tasks.sh drop [task-id]          # 폐기 (archive로 이동, worktree/branch 삭제)
+./scripts/tasks.sh drop [task-id]          # 폐기 (archive)
 ```
 
 worktree 내부에서 실행하면 `task-id`를 자동 감지합니다.
+
+### 에이전트 매핑
+
+task.md 의 `required_roles` 에서 역할별 agent 를 선언:
+
+```yaml
+required_roles:
+  - { role: planner,    agent: claude }
+  - { role: architect,  agent: claude }
+  - { role: backend,    agent: codex }      # 반복 구현은 codex
+  - { role: qa,         agent: kiro }       # QA 는 kiro IDE 로
+  - { role: reviewer,   agent: claude }     # 리뷰는 claude 추천
+```
+
+지원:
+- **claude** / **codex** → `orca agent launch` (Orca 탭/채팅에서 열림)
+- **kiro** → `kiro chat --new-window --mode agent` (Kiro IDE 새 창)
 
 ### 역할 세션
 

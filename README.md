@@ -30,9 +30,17 @@ harness-test/
 │   └── api/                   NestJS
 │
 ├── scripts/
-│   ├── tasks.sh               task 라이프사이클 (new/list/advance/merge/drop)
+│   ├── tasks.sh               task 라이프사이클 (new/list/advance/merge/drop/spawn)
 │   ├── role.sh                역할 세션 진입점
-│   └── chat.sh                task별 채팅 로그 (JSONL)
+│   ├── chat.sh                task별 채팅 로그 (JSONL)
+│   ├── orca/
+│   │   ├── setup.sh             1회성 external-worktree-visibility 설정
+│   │   └── spawn.sh             task.md agent 매핑 → 어댑터 호출
+│   └── agents/
+│       ├── _bootstrap-prompt.sh  공통 역할 부트스트랩 프롬프트
+│       ├── claude.sh             orca agent launch --agent claude
+│       ├── codex.sh              orca agent launch --agent codex
+│       └── kiro.sh               kiro chat --new-window --mode agent
 │
 ├── .harness/
 │   ├── WORKPLAN.md            전체 설계 + Phase 체크리스트
@@ -89,13 +97,22 @@ Per-task worktree    task마다 .worktrees/T###-<slug>/ (브랜치: task/T###-<s
 
 ## 명령어 레퍼런스
 
+### 최초 1회 (Orca 환경 세팅)
+
+```bash
+./scripts/orca/setup.sh                    # external worktree visibility: show
+```
+
 ### Task 라이프사이클
 
 ```bash
-./scripts/tasks.sh new <slug>              # 신규 task (worktree + 브랜치 + task.md 생성)
+./scripts/tasks.sh new <slug>              # worktree + 브랜치 + task.md 생성 + planner 자동 spawn
+./scripts/tasks.sh new <slug> --no-spawn   # agent spawn 없이 (Phase 1 수동 모드)
 ./scripts/tasks.sh list                    # 활성 task 테이블
 ./scripts/tasks.sh show [task-id]          # task 요약
-./scripts/tasks.sh advance [task-id]       # current_role → 다음 required_role
+./scripts/tasks.sh advance [task-id]       # 다음 역할로 커서 이동 + 다음 agent spawn
+./scripts/tasks.sh advance [task-id] --no-spawn  # 커서만 이동
+./scripts/tasks.sh spawn [task-id] [role]  # 현재/지정 역할 agent 재 spawn (디버깅)
 ./scripts/tasks.sh merge [task-id]         # rebase main + ff-only merge + cleanup
 ./scripts/tasks.sh drop [task-id]          # 폐기 (archive 로)
 ```
@@ -175,7 +192,7 @@ task 번호 N 에 대해:
 | Phase | 내용 | 상태 |
 |-------|------|------|
 | 1 | 코어 뼈대 (수동 작동) — 역할 파일, tasks/role/chat 스크립트 | ✅ 완료 |
-| 2 | Orca 통합 + 에이전트 어댑터 (claude/codex/kiro) | 예정 |
+| 2 | Orca 통합 + 에이전트 어댑터 (claude/codex/kiro) | ✅ 완료 |
 | 3 | Slack + Coordinator 자동 dispatch 루프 | 예정 |
 | 4 | (선택) tmux 관측 레이어 | 예정 |
 

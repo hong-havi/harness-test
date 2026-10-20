@@ -109,19 +109,32 @@ User → Slack (#harness-coord)
 
 ### Phase 2 — Orca 통합 + 에이전트 어댑터
 
-**목표**: `tasks.sh new`가 내부적으로 Orca worktree + spawn을 호출. 역할 전환 시 Orca로 agent 세션을 spawn/종료. 초기엔 claude 하나만 사용.
+**방침 (조정)**: 설계 조사 결과, `orca worktree create` 는 **경로 지정이 불가**해 `.worktrees/` 를 레포 내부에 유지하는 요건과 양립 불가. 따라서 **하이브리드**:
+- worktree 생성/제거는 **git worktree** 유지 (Phase 1 그대로)
+- `orca repo set --external-worktree-visibility show` 로 git worktree 를 Orca 가 보도록 노출
+- agent spawn 은 `orca agent launch --worktree path:<abs>` 로 수행 (claude/codex)
+- **kiro** 는 Orca native 가 아니므로 `kiro chat --new-window --mode agent "<prompt>"` 로 직접 호출 (Kiro IDE 창 열림)
 
 파일:
-- `scripts/orca/worktree.sh` — orca worktree 생성/삭제 래퍼
-- `scripts/orca/spawn.sh` — orca spawn agent 래퍼 (role + task 컨텍스트 주입)
-- `scripts/agents/claude.sh` — claude code CLI 어댑터
-- `scripts/agents/codex.sh` — (스켈레톤)
-- `scripts/agents/kiro.sh` — (스켈레톤)
+- [x] `scripts/orca/setup.sh` — 1회성 external-worktree-visibility 설정
+- [x] `scripts/orca/spawn.sh` — task.md 의 agent 매핑 읽어 어댑터 호출
+- [x] `scripts/agents/_bootstrap-prompt.sh` — 공통 역할 부트스트랩 프롬프트 생성
+- [x] `scripts/agents/claude.sh` — orca agent launch --agent claude
+- [x] `scripts/agents/codex.sh` — orca agent launch --agent codex
+- [x] `scripts/agents/kiro.sh` — kiro chat --new-window --mode agent
+
+tasks.sh 변경:
+- [x] `new <slug>` 끝에 planner 자동 spawn (`--no-spawn` 지원)
+- [x] `advance` 끝에 다음 역할 자동 spawn (`--no-spawn` 지원)
+- [x] `spawn [task-id] [role]` 서브커맨드 추가 (디버깅)
 
 **검증**:
-- `tasks.sh new <slug>` 이 Orca를 통해 worktree 생성 후 planner를 자동 spawn
-- 역할 완료 시 `tasks.sh advance` 가 Orca spawn 호출로 다음 역할 세션 시작
-- 세션은 역할 완료 시 종료되고 다음 역할은 fresh context로 시작
+- [x] 스크립트 syntax OK (bash -n 통과)
+- [x] `scripts/orca/setup.sh` 가 external-worktree-visibility 를 성공 설정
+- [x] `tasks.sh new <slug>` → spawn 디스패처가 claude 어댑터 호출 명령을 올바르게 구성 (DRY_RUN 검증)
+- [x] 역할 완료 후 `tasks.sh advance` → 다음 agent (configured per role) spawn 호출 체인 OK
+- [x] agent 매핑 변경 시(backend→codex, qa→kiro) 올바른 어댑터가 선택됨 (DRY_RUN 검증)
+- [ ] 실제 agent 세션에서 end-to-end 돌림 (user가 수행 예정)
 
 ### Phase 3 — Slack + Coordinator 자동화
 
