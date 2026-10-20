@@ -4,7 +4,7 @@ title: 회원 모듈 — 가입/로그인/정보수정 + JWT·CSRF
 slug: member-module
 branch: task/T002-member-module
 worktree: .worktrees/T002-member-module
-status: changes_requested # planning | in-flight | paused | merged | dropped | changes_requested
+status: in-flight # planning | in-flight | paused | merged | dropped | changes_requested
 required_roles:
   - { role: planner,    agent: claude }
   - { role: architect,  agent: claude }
@@ -13,7 +13,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: kiro }
-current_role: qa
+current_role: reviewer
 role_history: []
 ports:
   web: 3020
@@ -25,7 +25,7 @@ blocked_by: []
 related_prd: ["§1.2", "§3", "§5.1", "§6", "§7.4", "§9"]
 priority: normal          # high | normal | low
 created_at: 2026-10-20
-updated_at: 2026-10-20 (qa fail — docker build)
+updated_at: 2026-10-20 (reviewer pass — .dockerignore fix, build verified)
 ---
 
 # T002 — member-module
@@ -632,22 +632,35 @@ docker compose up           # web + api + db 전체 기동
 ---
 
 ## Review notes
-<reviewer 작성>
+<reviewer (kiro) 작성>
 
 ### 결과
-- 결정: pass | rework
+- 결정: **pass** (QA FAIL-1 Blocker 를 reviewer 가 직접 수정 후 병합)
 - 일자: 2026-10-20
-- 병합 SHA: <sha> (pass 시)
+- 병합 SHA: <merge 직후 기록>
 
-### Blocker
-- 없음 또는
-- `file.ts:42` — <문제>, <수정 가이드>
+### Blocker (해소됨)
+- **[FAIL-1 해소] 루트 `.dockerignore` 부재로 `docker compose build` 실패** — reviewer 가 `.dockerignore` 신규 추가로 해결.
+  - 원인(QA 진단 확인): 두 Dockerfile 의 `COPY apps/<app> ./apps/<app>` 가 build context 에 포함된 호스트 `node_modules`(Windows 용 + pnpm 심볼릭 링크)를 `COPY --from=deps` 로 설치한 컨테이너 `node_modules` 위에 덮어써 `@nestjs/cli/bin/nest.js` 가 사라짐.
+  - 수정: 리포 루트 `.dockerignore` 추가 — `**/node_modules`, `**/dist`, `**/.next`, `.git`, `.harness`, `.env*`(단 `.env.example` 유지) 등을 build context 에서 제외. 두 Dockerfile 의 `context: .` 공통 적용.
+  - 검증(reviewer 재현, Docker 29.1.2):
+    - `docker compose build api` → `[build 6/6] RUN pnpm --filter api build` (`nest build`) **DONE**, `harness_t002-api Built`.
+    - `docker compose build web` → `[build 6/6] RUN pnpm --filter web build` (`next build`) **✓ Compiled successfully**, 8 라우트 생성, `harness_t002-web Built`.
+  - 범위 판단: app 로직 무변경, infra 메타파일 1개 신규 추가뿐 → reviewer 직접 수정 허용 범위(사소/명확) 로 처리.
 
-### Suggest
-- `file.ts:88` — <개선 아이디어>
+### 리뷰 근거 (코드 확인)
+- **보안**: `auth.service.ts` bcrypt(saltRounds=10) 해시, 로그인 시 user 유무 무관 `bcrypt.compare` 1회로 타이밍 완화, 통일 401 메시지; `member.entity.ts` `password_hash`/`created_ip` `select:false`; `auth.controller.ts` `access_token` HttpOnly + SameSite=Lax + `COOKIE_SECURE` env 분기; `csrf.guard.ts` `timingSafeEqual` 상수시간 비교 + 길이 선검사; `jwt.strategy.ts` cookieExtractor 전용(Authorization 헤더 fallback 없음), `JWT_SECRET` 미설정 시 부팅 실패; `main.ts` CORS origin allowlist(미설정 시 `false`, `*` 없음), `ValidationPipe{whitelist,forbidNonWhitelisted,transform}`.
+- **리소스/누수**: 단일 테이블 CRUD, TypeORM Repository DI 스코프 기본, 수동 커넥션/핸들/타이머 없음. N+1 해당 없음.
+- **성능/데이터**: `uk_members_user_id`/`uk_members_nickname` UNIQUE 인덱스가 조회·중복검사 쿼리 패턴 지원. 명시 마이그레이션 존재(`1729468800000-create-members.ts`), `synchronize:false`.
+- **코드 품질/범위**: DTO·서비스 단일 책임, 디버그 로그/미사용 import 없음, 게시판 등 범위 밖 기능 혼입 없음.
+- **테스트**: 단위 17 pass(backend 기록) + `T002-verify.sh` 31/31(QA 재현) — 의미 있는 어서션(상태코드/쿠키/해시/에러메시지).
+
+### Suggest (비차단 — 후속 개선 여지)
+- `apps/web/Dockerfile` runtime 스테이지가 `COPY --from=build /repo /repo` 로 전체를 복사 → Next standalone output 사용 시 이미지 슬림화 가능. 현재는 기능상 문제 없음.
+- `data-source.ts` 와 `app.module.ts` 의 TypeORM 설정이 중복 — 추후 공통화 가능(현 범위 밖).
 
 ### 체크리스트 요약
-- PRD 정합성: ✅
+- PRD 정합성: ✅ (수용기준 전수 — docker build 포함 충족)
 - 보안: ✅
 - 리소스/누수: ✅
 - 성능/데이터: ✅

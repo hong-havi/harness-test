@@ -1,0 +1,24 @@
+# Build context 에서 제외 — Dockerfile 의 `COPY apps/<app> ./apps/<app>` 가
+# 호스트의 node_modules/빌드 산출물을 컨테이너의 pnpm 설치본 위에 덮어쓰는 것을 방지.
+# (QA FAIL-1: @nestjs/cli/bin/nest.js 누락 원인)
+
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+
+# VCS / 하네스 메타
+.git
+.gitignore
+.worktrees
+.harness
+
+# 로컬 환경/로그
+.env
+.env.*
+!.env.example
+**/*.log
+
+# 에디터
+.vscode
+.idea
