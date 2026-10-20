@@ -10,10 +10,10 @@ required_roles:
   - { role: architect,  agent: claude }
   # - { role: designer,   agent: claude, mcp: [figma] }
   - { role: backend,    agent: claude }
-  - { role: frontend,   agent: claude }
+  - { role: frontend,   agent: kiro }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: claude }
-current_role: architect
+current_role: backend
 role_history: []
 ports:
   web: 3020
@@ -402,24 +402,121 @@ class UpdateMeDto {
 ---
 
 ## Implementation (Backend)
-<backend 작성>
+
+### 설계 메모
+- 엔드포인트 5종: `POST /auth/signup`, `POST /auth/login`, `POST /auth/logout`, `GET /members/me`, `PATCH /members/me` — Design 섹션 API 계약 그대로 구현.
+- 엔티티 1종: `MemberEntity` (members 테이블). `password_hash`, `created_ip` 는 `select: false` 로 기본 조회 제외.
+- 마이그레이션 1건: `1729468800000-create-members.ts` (DDL은 Design 섹션과 완전 일치).
 
 ### 변경 파일
-- `apps/api/.../...` — 설명
+**루트 (monorepo 스캐폴드 — 그린필드 상태라 신규 생성)**
+- `package.json` — pnpm 10.33 + onlyBuiltDependencies(bcrypt/@nestjs/core)
+- `pnpm-workspace.yaml`
+- `.env.example` — api/db 전체 변수 예시
+- `docker-compose.yml` — base compose (db + api). override 는 tasks.sh new 가 web/api 포트 스코프를 자동 생성.
+
+**NestJS 앱 (`apps/api/`)**
+- `package.json`, `tsconfig.json`, `nest-cli.json`, `jest.config.js`, `Dockerfile`
+- `src/main.ts` — `cookieParser()`, `trust proxy=1`, `ValidationPipe(whitelist/forbidNonWhitelisted/transform)`, CORS(credentials=true, 명시 origin)
+- `src/app.module.ts` — TypeORM(mysql, `synchronize:false`, utf8mb4) + Auth/Members
+- `src/data-source.ts` — typeorm CLI용 DataSource
+- `src/members/member.entity.ts` — DDL과 1:1 매핑
+- `src/members/members.{module,controller,service}.ts` — GET/PATCH /members/me
+- `src/members/dto/update-me.dto.ts` — nickname/newPassword optional + `ValidateIf` 로 newPassword 있을 때 currentPassword 필수
+- `src/auth/auth.{module,controller,service}.ts` — signup/login/logout
+- `src/auth/dto/{signup,login}.dto.ts` — class-validator 검증 (PRD §3.2)
+- `src/auth/jwt.strategy.ts` — cookieExtractor only (Authorization 헤더 fallback 없음)
+- `src/auth/jwt-auth.guard.ts` — 통일 메시지의 401
+- `src/auth/csrf.guard.ts` — Double Submit Cookie, `crypto.timingSafeEqual`
+- `src/migrations/1729468800000-create-members.ts`
+- 테스트: `auth.service.spec.ts`, `members.service.spec.ts`, `csrf.guard.spec.ts` (총 17 테스트)
 
 ### 새 환경변수
-- `VAR_NAME` — 용도
+전부 PRD §7.3 범위 내. 신규 추가 없음.
+- `JWT_SECRET` — HS256 서명 키 (필수)
+- `JWT_EXPIRES_IN` — 초 단위, 기본 3600
+- `COOKIE_SECURE` — `true`/`false` 문자열. 로컬 dev는 false.
+- `CORS_ORIGIN` — 콤마 분리 가능. rewrites 운용 시 보조층.
+- `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` — MySQL 접속
+- `MYSQL_ROOT_PASSWORD` — docker-compose db 서비스용
+- `API_PORT` — 컨테이너 외부에서는 override 의 포트 매핑(T002 는 4020)에 종속
 
 ### 마이그레이션
-- 파일명: ...
+- 파일명: `apps/api/src/migrations/1729468800000-create-members.ts` (`CreateMembers1729468800000`)
+- 실행: `docker compose run --rm api pnpm migration:run` (운영 전제)
+- 로컬 ts-node: `DB_HOST=127.0.0.1 DB_PORT=3308 DB_USER=... pnpm --filter api migration:run`
+- down 지원: `migration:revert` 로 `DROP TABLE members`
+
+### API 계약 (실측 응답 — frontend 참고용)
+
+| 엔드포인트 | 성공 응답 | 쿠키 | 비고 |
+|---|---|---|---|
+| `POST /auth/signup` 201 | `{"id":"1","userId":"alice01","nickname":"alice"}` | 없음 | `id` 는 bigint → 문자열 |
+| `POST /auth/login` 200 | `{"id":"1","userId":"alice01","nickname":"alice"}` | `access_token` (HttpOnly, SameSite=Lax, Max-Age=3600), `csrf_token` (HttpOnly 아님) | 토큰 바디 미노출 |
+| `POST /auth/logout` 200 | `{"ok":true}` | 두 쿠키 `Max-Age=0; Expires=past` | JwtGuard 통과 필요 |
+| `GET /members/me` 200 | `{"id","userId","nickname","createdAt","updatedAt"}` | - | `password_hash`/`created_ip` 미포함 |
+| `PATCH /members/me` 200 | GET /me 와 동일 | - | 헤더 `X-CSRF-Token` 필수. body 는 `nickname`/`newPassword`+`currentPassword` optional, 최소 1 |
+
+에러:
+- 400: DTO 위반, 빈 바디, `currentPassword` 불일치, 허용 안된 필드(`forbidNonWhitelisted`)
+- 401: 로그인 자격증명 불일치(통일 메시지), 토큰 없음/만료/위조
+- 403: CSRF 누락/불일치
+- 409: `user_id` 또는 `nickname` 중복 (가입/수정 모두)
 
 ### 로컬 재현
 ```bash
-# 명령
+# 1) 의존성 설치 (최초 1회) — bcrypt native binding 포함
+pnpm install
+# bcrypt native binding 수동 수행 (pnpm 10 의 onlyBuiltDependencies 가 자동 수행하지 않을 때):
+# node node_modules/.pnpm/bcrypt@5.1.1/node_modules/@mapbox/node-pre-gyp/bin/node-pre-gyp install \
+#   --fallback-to-build \
+#   --directory=node_modules/.pnpm/bcrypt@5.1.1/node_modules/bcrypt
+
+# 2) 단위 테스트
+pnpm --filter api test        # 17 pass
+
+# 3) DB 기동 (base compose 만 사용 — frontend 작업 전까지 override 의 web 서비스는 base 미정의)
+docker compose -f docker-compose.yml up -d db
+
+# 4) 마이그레이션
+DB_HOST=127.0.0.1 DB_PORT=3308 DB_USER=board DB_PASSWORD=board_pw DB_NAME=board \
+  pnpm --filter api migration:run
+
+# 5) API 기동
+pnpm --filter api build
+DB_HOST=127.0.0.1 DB_PORT=3308 DB_USER=board DB_PASSWORD=board_pw DB_NAME=board \
+  JWT_SECRET=dev-secret-change-me-32-bytes-xxxxxxxxxxxxxxxx JWT_EXPIRES_IN=3600 \
+  COOKIE_SECURE=false CORS_ORIGIN=http://localhost:3020 API_PORT=4020 \
+  node apps/api/dist/main.js
+
+# 6) 수용 기준 전수 재현
+bash .harness/tasks/T002-verify.sh   # 31 PASS 0 FAIL
 ```
 
 ### 수용 기준 자가 검증
-- [x] ...
+- [x] `members` 테이블이 PRD §3.1 스키마대로 생성 — `SHOW CREATE TABLE members` 로 확인 (utf8mb4_unicode_ci, UNIQUE user_id/nickname)
+- [x] `POST /auth/signup`: 유효 입력 → **201**, `password_hash` 는 `$2b$10$...` bcrypt 포맷으로 저장
+- [x] 회원가입 검증 실패(user_id/password/nickname 포맷) → **400**
+- [x] 중복 `user_id`/`nickname` → **409** (사전 조회 + MySQL UNIQUE race 재매핑)
+- [x] `POST /auth/login`: 성공 시 바디 `{id,userId,nickname}` (토큰 미노출), `Set-Cookie: access_token (HttpOnly)` + `csrf_token (HttpOnly 아님)`
+- [x] 로그인 실패(아이디/비번 불일치) → **동일 메시지** `아이디 또는 비밀번호가 일치하지 않습니다.` + **401**
+- [x] `access_token` 쿠키는 HttpOnly — curl cookie jar 의 `#HttpOnly_` 접두사로 확인
+- [x] `GET /members/me`: 유효 JWT → **200**, 쿠키 없음/위조 → **401**, `password_hash`/`created_ip` 응답에 미포함
+- [x] `PATCH /members/me`: nickname 중복 → **409**, newPassword + currentPassword 불일치 → **400**, 빈 바디 → **400**, user_id 전송 → **400**(forbidNonWhitelisted)
+- [x] `PATCH /members/me` CSRF 누락/불일치 → **403** (JwtGuard 통과 후 CsrfGuard 에서 거부)
+- [x] `POST /auth/logout`: `Set-Cookie: access_token=; Max-Age=0; HttpOnly` 재발급 (csrf_token 도 동일)
+- [x] 비밀번호 평문: API 로그 (`grep -iE "password12|brand-new-9" /tmp/api.log` 결과 **없음**), 응답 바디 (토큰/해시 모두 미노출)
+- [x] `created_ip`: `X-Forwarded-For: 10.1.2.3` 로 가입 → DB `SELECT created_ip` = `10.1.2.3` (`trust proxy=1`)
+- [ ] 프런트 가입→로그인→정보수정→로그아웃 완주 — **frontend 역할 담당**
+- [ ] `docker compose up` 만으로 web/api/db 전체 기동 — **frontend 가 base compose 에 `web` 서비스 추가해야 완료**. 현재 backend-only 로는 `docker compose -f docker-compose.yml up` 가능 (base 는 db + api 만).
+
+### Frontend 핸드오프 노트
+- API 는 same-origin 가정. Next.js `rewrites` 로 `/api/:path* → http://api:4000/:path*` 설정.
+- 쿠키 전송: 모든 fetch 는 `credentials: 'include'`.
+- 상태 변경(PATCH /members/me) 요청은 `document.cookie` 에서 `csrf_token` 꺼내 `X-CSRF-Token` 헤더로 복사.
+- 응답 바디 필드명은 **camelCase** (`userId`, `nickname`, `createdAt`, `updatedAt`). `id` 는 문자열(bigint).
+- 401 받으면 로그인 페이지로 이동. 403 은 보통 CSRF 토큰 재발급 필요 (재로그인 유도).
+- base `docker-compose.yml` 에 `web` 서비스 섹션을 추가해야 override 의 `3020:3000` 포트 매핑이 유효해짐. api/db 는 이미 base 에 정의됨.
 
 ---
 
