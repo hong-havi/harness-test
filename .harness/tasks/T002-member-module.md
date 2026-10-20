@@ -13,7 +13,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: claude }
-current_role: backend
+current_role: frontend
 role_history: []
 ports:
   web: 3020
