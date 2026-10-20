@@ -79,7 +79,15 @@ SLUG="${SLUG#*-}"                         # signup-api
 WORKTREE_PATH="$WORKTREES_DIR/${TASK_ID}-${SLUG}"
 [[ -d "$WORKTREE_PATH" ]] || die "worktree 경로 없음: $WORKTREE_PATH"
 
-info "spawn: task=$TASK_ID role=$ROLE agent=$AGENT worktree=$WORKTREE_PATH"
+# Orca 는 Windows 에서 "D:/path/..." 포맷(mixed, drive letter 대문자, forward slash)을 요구함.
+# bash 의 /d/... 는 selector_not_found 로 실패. cygpath 로 변환.
+if command -v cygpath >/dev/null 2>&1; then
+  WORKTREE_PATH_ORCA="$(cygpath -m "$WORKTREE_PATH")"
+else
+  WORKTREE_PATH_ORCA="$WORKTREE_PATH"
+fi
 
-# 어댑터 호출 (worktree 절대경로 + task-id + role 전달)
-exec "$ADAPTER" "$TASK_ID" "$ROLE" "$WORKTREE_PATH"
+info "spawn: task=$TASK_ID role=$ROLE agent=$AGENT worktree=$WORKTREE_PATH_ORCA"
+
+# 어댑터 호출 (Orca 호환 포맷 전달)
+exec "$ADAPTER" "$TASK_ID" "$ROLE" "$WORKTREE_PATH_ORCA"
