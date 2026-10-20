@@ -1,0 +1,418 @@
+#!/usr/bin/env bash
+# tasks.sh — task 라이프사이클 관리
+#
+# 서브커맨드:
+#   new <slug>            새 task (worktree + 브랜치 + task.md + compose override)
+#   list                  활성 task 테이블
+#   advance [task-id]     current_role 커서를 다음 required_role로
+#   merge [task-id]       rebase main + ff-only merge + cleanup
+#   drop [task-id]        폐기 (archive)
+#   show [task-id]        task 요약 출력
+#
+# worktree 내부에서 실행하면 task-id 자동 감지.
+# Phase 1: Orca 미통합. git worktree 직접 사용.
+
+set -euo pipefail
+
+# ─────────────────────────────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+HARNESS_DIR="$REPO_ROOT/.harness"
+TASKS_DIR="$HARNESS_DIR/tasks"
+CHAT_DIR="$HARNESS_DIR/chat"
+ARCHIVE_DIR="$HARNESS_DIR/archive"
+WORKTREES_DIR="$REPO_ROOT/.worktrees"
+TEMPLATE_TASK="$HARNESS_DIR/templates/task.md"
+TEMPLATE_COMPOSE="$HARNESS_DIR/templates/docker-compose.override.yml.tmpl"
+MAIN_BRANCH="main"
+
+# ─────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────
+die() { echo "ERROR: $*" >&2; exit 1; }
+info() { echo "→ $*"; }
+
+usage() {
+  cat <<EOF
+Usage: $0 <command> [args]
+
+Commands:
+  new <slug>           Create new task + worktree + branch
+  list                 Show active tasks
+  advance [task-id]    Move current_role to next required role
+  merge [task-id]      Rebase + ff-only merge to main + cleanup
+  drop [task-id]       Archive and remove worktree/branch
+  show [task-id]       Print task summary
+
+worktree 내부에서 실행하면 task-id 자동 감지.
+EOF
+}
+
+# task-id (T001) 를 받아 task 파일 경로 반환
+task_file() {
+  local id="$1"
+  local f
+  f=$(find "$TASKS_DIR" -maxdepth 1 -name "${id}-*.md" | head -1)
+  [[ -n "$f" ]] || die "task 파일을 찾을 수 없음: $id"
+  echo "$f"
+}
+
+# 현재 디렉토리가 worktree 안이면 task-id 추출, 아니면 빈 문자열
+detect_task_id() {
+  local pwd_abs
+  pwd_abs="$(pwd -P)"
+  if [[ "$pwd_abs" == "$WORKTREES_DIR"/* ]]; then
+    local rel="${pwd_abs#$WORKTREES_DIR/}"
+    local wt_name="${rel%%/*}"
+    # T001-signup-api → T001
+    echo "${wt_name%%-*}"
+  else
+    echo ""
+  fi
+}
+
+# task-id 를 인자로 받되, 없으면 자동 감지, 그래도 없으면 die
+resolve_task_id() {
+  local given="${1:-}"
+  if [[ -n "$given" ]]; then
+    echo "$given"
+    return
+  fi
+  local detected
+  detected="$(detect_task_id)"
+  [[ -n "$detected" ]] || die "task-id 를 지정하거나 worktree 안에서 실행하세요."
+  echo "$detected"
+}
+
+# 다음 번호 (max + 1), 3자리 0패딩
+next_task_num() {
+  local max=0
+  if [[ -d "$TASKS_DIR" ]]; then
+    while IFS= read -r f; do
+      local base n
+      base="$(basename "$f")"
+      n="${base#T}"
+      n="${n%%-*}"
+      # strip leading zeros for arithmetic
+      n=$((10#$n))
+      (( n > max )) && max=$n
+    done < <(find "$TASKS_DIR" -maxdepth 1 -name 'T[0-9][0-9][0-9]-*.md' 2>/dev/null || true)
+  fi
+  if [[ -d "$ARCHIVE_DIR" ]]; then
+    while IFS= read -r f; do
+      local base n
+      base="$(basename "$f")"
+      n="${base#T}"
+      n="${n%%-*}"
+      n=$((10#$n))
+      (( n > max )) && max=$n
+    done < <(find "$ARCHIVE_DIR" -maxdepth 1 -name 'T[0-9][0-9][0-9]-*.md' 2>/dev/null || true)
+  fi
+  printf 'T%03d' $((max + 1))
+}
+
+# task 번호 → 포트/프로젝트 이름
+compute_ports() {
+  local id="$1"              # T001
+  local n="${id#T}"
+  n=$((10#$n))
+  local idx=$((n % 100))
+  echo "WEB_PORT=$((3000 + idx * 10))"
+  echo "API_PORT=$((4000 + idx * 10))"
+  echo "DB_PORT=$((3306 + idx))"
+  echo "COMPOSE_PROJECT_NAME=harness_$(echo "$id" | tr '[:upper:]' '[:lower:]')"
+  echo "TASK_ID=$id"
+}
+
+# frontmatter 필드 값 추출 (단순 YAML, 1라인)
+# 사용: get_fm <file> <key>
+get_fm() {
+  local file="$1"
+  local key="$2"
+  awk -v k="$key" '
+    /^---/ { fm = !fm; next }
+    fm && $0 ~ "^"k":" {
+      sub("^"k": *", "", $0)
+      sub(/ *#.*$/, "", $0)
+      sub(/^"|"$/, "", $0)
+      sub(/[[:space:]]+$/, "", $0)
+      print
+      exit
+    }
+  ' "$file"
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# Commands
+# ─────────────────────────────────────────────────────────────────────
+
+cmd_new() {
+  local slug="${1:-}"
+  [[ -n "$slug" ]] || die "slug 가 필요합니다. 예: $0 new signup-api"
+  [[ "$slug" =~ ^[a-z0-9-]+$ ]] || die "slug 는 kebab-case 소문자+숫자+하이픈만 허용"
+
+  local id
+  id="$(next_task_num)"
+  local branch="task/${id}-${slug}"
+  local wt_rel=".worktrees/${id}-${slug}"
+  local wt_abs="$REPO_ROOT/$wt_rel"
+  local task_rel=".harness/tasks/${id}-${slug}.md"
+  local task_abs="$REPO_ROOT/$task_rel"
+
+  info "새 task 생성: $id ($slug)"
+  info "  branch:    $branch"
+  info "  worktree:  $wt_rel"
+  info "  task file: $task_rel"
+
+  # 1) worktree + 브랜치 (main 기반)
+  cd "$REPO_ROOT"
+  git worktree add -b "$branch" "$wt_abs" "$MAIN_BRANCH" >/dev/null
+  info "  → git worktree 생성"
+
+  # 2) task.md 생성 (template 복사 + 치환)
+  mkdir -p "$TASKS_DIR"
+  local today
+  today="$(date +%Y-%m-%d)"
+  local port_env
+  port_env="$(compute_ports "$id")"
+  local web_port api_port db_port compose_proj
+  web_port=$(echo "$port_env" | awk -F= '/^WEB_PORT=/{print $2}')
+  api_port=$(echo "$port_env" | awk -F= '/^API_PORT=/{print $2}')
+  db_port=$(echo "$port_env" | awk -F= '/^DB_PORT=/{print $2}')
+  compose_proj=$(echo "$port_env" | awk -F= '/^COMPOSE_PROJECT_NAME=/{print $2}')
+
+  sed \
+    -e "s|T###|${id}|g" \
+    -e "s|<kebab-slug>|${slug}|g" \
+    -e "s|<slug>|${slug}|g" \
+    -e "s|<한 줄 요약>|${slug}|g" \
+    -e "s|web: 3010|web: ${web_port}|" \
+    -e "s|api: 4010|api: ${api_port}|" \
+    -e "s|db: 3307|db: ${db_port}|" \
+    -e "s|compose_project: harness_t###|compose_project: ${compose_proj}|" \
+    -e "s|YYYY-MM-DD|${today}|g" \
+    "$TEMPLATE_TASK" > "$task_abs"
+  info "  → task.md 생성"
+
+  # 3) task.md 를 worktree 쪽에도 복사해 두되 — 실제로는 main에서 git add 후
+  #    worktree 가 보도록 커밋 전까지는 각자 영역. 간단히 main 쪽에만 두고
+  #    각 역할은 main 트리의 파일을 참조하는 전략은 ff-only merge 와 충돌.
+  #
+  #    선택: main 에 task.md 커밋하고, worktree 는 main 기반이므로 자동 보임.
+  cd "$REPO_ROOT"
+  git add "$task_rel"
+  git -c core.hooksPath=/dev/null commit -m "${id} [harness]: create task ${slug}" >/dev/null
+  info "  → main 에 task.md 커밋"
+
+  # 4) worktree 쪽에 compose override + .env 생성 (gitignore 됨)
+  mkdir -p "$wt_abs"
+  {
+    echo "# task-scoped environment"
+    echo "$port_env"
+  } > "$wt_abs/.env"
+  info "  → $wt_rel/.env 생성"
+
+  # compose override 템플릿 변수 치환
+  WEB_PORT="$web_port" API_PORT="$api_port" DB_PORT="$db_port" \
+  TASK_ID="$id" COMPOSE_PROJECT_NAME="$compose_proj" \
+    envsubst '${WEB_PORT} ${API_PORT} ${DB_PORT} ${TASK_ID}' < "$TEMPLATE_COMPOSE" \
+    > "$wt_abs/docker-compose.override.yml"
+  info "  → docker-compose.override.yml 생성"
+
+  # 5) chat 로그 초기화
+  mkdir -p "$CHAT_DIR"
+  "$SCRIPT_DIR/chat.sh" append "$id" harness tasks note "task $id ($slug) created" >/dev/null
+
+  info ""
+  info "완료. 다음 단계:"
+  info "  cd $wt_rel"
+  info "  ./scripts/role.sh planner"
+}
+
+cmd_list() {
+  shopt -s nullglob
+  local rows=0
+  printf "%-6s %-24s %-14s %-10s %-18s %s\n" "ID" "SLUG" "STATUS" "CURRENT" "PORTS(web/api/db)" "BRANCH"
+  echo "─────────────────────────────────────────────────────────────────────────────────────────"
+  for f in "$TASKS_DIR"/T[0-9][0-9][0-9]-*.md; do
+    [[ -f "$f" ]] || continue
+    local id slug status current branch web api db
+    id=$(get_fm "$f" "id")
+    slug=$(get_fm "$f" "slug")
+    status=$(get_fm "$f" "status")
+    current=$(get_fm "$f" "current_role")
+    branch=$(get_fm "$f" "branch")
+    web=$(awk '/^  web:/{print $2; exit}' "$f")
+    api=$(awk '/^  api:/{print $2; exit}' "$f")
+    db=$(awk '/^  db:/{print $2; exit}' "$f")
+    printf "%-6s %-24s %-14s %-10s %-18s %s\n" \
+      "$id" "$slug" "$status" "$current" "${web}/${api}/${db}" "$branch"
+    rows=$((rows+1))
+  done
+  if [[ $rows -eq 0 ]]; then
+    echo "(no active tasks)"
+  fi
+}
+
+# required_roles 리스트에서 current_role 다음 역할 찾기
+# task.md 를 파싱 — "- { role: xxx, agent: yyy }" 패턴
+cmd_advance() {
+  local id
+  id="$(resolve_task_id "${1:-}")"
+  local f
+  f="$(task_file "$id")"
+
+  local current
+  current="$(get_fm "$f" "current_role")"
+  [[ -n "$current" ]] || die "current_role 을 읽지 못함: $f"
+
+  # required_roles 리스트에서 role 추출 (주석 라인은 스킵)
+  local roles
+  roles=$(awk '
+    /^required_roles:/ { in_block=1; next }
+    /^[a-zA-Z_]+:/ { in_block=0 }
+    in_block && /^[[:space:]]*#/ { next }
+    in_block && /role:/ {
+      sub(/.*role: */, "")
+      sub(/,.*/, "")
+      sub(/[}].*/, "")
+      gsub(/[[:space:]]/, "")
+      print
+    }
+  ' "$f")
+
+  [[ -n "$roles" ]] || die "required_roles 파싱 실패"
+
+  local next=""
+  local found=0
+  while IFS= read -r r; do
+    if [[ $found -eq 1 ]]; then
+      next="$r"
+      break
+    fi
+    [[ "$r" == "$current" ]] && found=1
+  done <<< "$roles"
+
+  if [[ -z "$next" ]]; then
+    info "'$current' 이후 역할 없음. 모든 required_roles 소진. status 를 수동 확인하세요."
+    return 0
+  fi
+
+  # frontmatter 의 current_role 교체
+  sed -i.bak "s|^current_role: .*|current_role: $next|" "$f"
+  rm -f "${f}.bak"
+  info "$id: current_role $current → $next"
+
+  "$SCRIPT_DIR/chat.sh" append "$id" "$current" "$next" handoff "advance: $current → $next" >/dev/null
+}
+
+cmd_merge() {
+  local id
+  id="$(resolve_task_id "${1:-}")"
+  local f
+  f="$(task_file "$id")"
+  local branch slug wt_rel wt_abs
+  branch=$(get_fm "$f" "branch")
+  slug=$(get_fm "$f" "slug")
+  wt_rel=".worktrees/${id}-${slug}"
+  wt_abs="$REPO_ROOT/$wt_rel"
+
+  info "merge $id (branch=$branch)"
+
+  cd "$REPO_ROOT"
+  git fetch --all --quiet || true
+
+  # rebase onto main
+  if [[ -d "$wt_abs" ]]; then
+    (
+      cd "$wt_abs"
+      git fetch origin "$MAIN_BRANCH" --quiet || true
+      info "  rebase $branch onto main"
+      git rebase "$MAIN_BRANCH"
+    ) || die "rebase 실패. 충돌 해결 후 재시도하거나 drop 하세요."
+  fi
+
+  # ff-only merge to main
+  git checkout "$MAIN_BRANCH"
+  info "  ff-only merge $branch → $MAIN_BRANCH"
+  git merge --ff-only "$branch" || die "ff-only merge 실패. rebase 가 선행되지 않았거나 분기됨."
+
+  # status 를 merged 로
+  sed -i.bak "s|^status: .*|status: merged|" "$f"
+  rm -f "${f}.bak"
+  git add "$f"
+  git -c core.hooksPath=/dev/null commit -m "${id} [harness]: mark merged" >/dev/null || true
+
+  # worktree + 브랜치 정리
+  if [[ -d "$wt_abs" ]]; then
+    git worktree remove --force "$wt_abs"
+    info "  worktree removed"
+  fi
+  git branch -D "$branch" >/dev/null 2>&1 || true
+  info "  branch deleted"
+
+  info "완료: $id merged."
+}
+
+cmd_drop() {
+  local id
+  id="$(resolve_task_id "${1:-}")"
+  local f
+  f="$(task_file "$id")"
+  local branch slug wt_abs
+  branch=$(get_fm "$f" "branch")
+  slug=$(get_fm "$f" "slug")
+  wt_abs="$REPO_ROOT/.worktrees/${id}-${slug}"
+
+  info "drop $id — 폐기합니다."
+  read -r -p "정말로? 되돌릴 수 없습니다 [y/N] " ans
+  [[ "$ans" == "y" || "$ans" == "Y" ]] || { info "취소됨"; return; }
+
+  cd "$REPO_ROOT"
+  if [[ -d "$wt_abs" ]]; then
+    git worktree remove --force "$wt_abs"
+  fi
+  git branch -D "$branch" >/dev/null 2>&1 || true
+
+  # task.md → archive
+  mkdir -p "$ARCHIVE_DIR"
+  mv "$f" "$ARCHIVE_DIR/"
+  info "  → archive 로 이동"
+
+  # chat log 도 archive
+  if [[ -f "$CHAT_DIR/${id}.jsonl" ]]; then
+    mv "$CHAT_DIR/${id}.jsonl" "$ARCHIVE_DIR/"
+  fi
+
+  git add -A
+  git -c core.hooksPath=/dev/null commit -m "${id} [harness]: drop task" >/dev/null || true
+  info "완료."
+}
+
+cmd_show() {
+  local id
+  id="$(resolve_task_id "${1:-}")"
+  local f
+  f="$(task_file "$id")"
+  echo "─── $(basename "$f") ───"
+  awk '/^---$/{c++; if(c==2){exit} next} c==1 {print}' "$f"
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# Entry
+# ─────────────────────────────────────────────────────────────────────
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  new)      cmd_new "$@" ;;
+  list)     cmd_list "$@" ;;
+  advance)  cmd_advance "$@" ;;
+  merge)    cmd_merge "$@" ;;
+  drop)     cmd_drop "$@" ;;
+  show)     cmd_show "$@" ;;
+  ""|-h|--help|help) usage ;;
+  *) usage; exit 1 ;;
+esac

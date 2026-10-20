@@ -1,0 +1,26 @@
+# docker-compose.override.yml — task별 포트 스코프
+# tasks.sh new 가 자동 생성. 사람이 수동 수정하지 않는다 (덮어쓰기됨).
+
+services:
+  web:
+    ports:
+      - "${WEB_PORT}:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE=/api
+
+  api:
+    ports:
+      - "${API_PORT}:4000"
+    environment:
+      - DB_HOST=db
+      - DB_PORT=3306
+      - CORS_ORIGIN=http://localhost:${WEB_PORT}
+
+  db:
+    ports:
+      - "${DB_PORT}:3306"
+    volumes:
+      - task_${TASK_ID}_mysql:/var/lib/mysql
+
+volumes:
+  task_${TASK_ID}_mysql:
