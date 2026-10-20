@@ -22,9 +22,24 @@ if [[ "${HARNESS_DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
-orca agent launch \
+RESPONSE="$(orca agent launch \
   --agent claude \
   --worktree "path:$WORKTREE_PATH" \
   --prompt "$PROMPT" \
   --focus \
-  --json
+  --json 2>&1)"
+echo "$RESPONSE"
+
+# spawn된 터미널 handle 을 기록 (advance 시 이전 역할 터미널 자동 close 용)
+HANDLE="$(echo "$RESPONSE" | awk -F'"' '/"handle":/{print $4; exit}')"
+if [[ -n "$HANDLE" ]]; then
+  GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir 2>/dev/null || echo "")"
+  if [[ "$GIT_COMMON_DIR" = /* || "$GIT_COMMON_DIR" =~ ^[A-Z]:/ ]]; then
+    REPO_ROOT="$(dirname "$GIT_COMMON_DIR")"
+  else
+    REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+  fi
+  mkdir -p "$REPO_ROOT/.harness/chat"
+  echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"$ROLE\",\"agent\":\"claude\",\"handle\":\"$HANDLE\"}" \
+    >> "$REPO_ROOT/.harness/chat/${TASK_ID}.handles"
+fi

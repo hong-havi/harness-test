@@ -18,7 +18,15 @@ set -euo pipefail
 # Paths
 # ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# worktree 안에서 호출돼도 메인 레포 root 를 찾음 (spawn.sh 와 동일 로직)
+GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir 2>/dev/null || echo "")"
+if [[ "$GIT_COMMON_DIR" = /* || "$GIT_COMMON_DIR" =~ ^[A-Z]:/ ]]; then
+  REPO_ROOT="$(dirname "$GIT_COMMON_DIR")"
+else
+  REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
+
 HARNESS_DIR="$REPO_ROOT/.harness"
 TASKS_DIR="$HARNESS_DIR/tasks"
 CHAT_DIR="$HARNESS_DIR/chat"
@@ -337,6 +345,18 @@ cmd_advance() {
   if [[ $no_spawn -eq 1 ]]; then
     info "(--no-spawn: 다음 agent 는 수동으로 spawn 하세요)"
   else
+    # 이전 역할 터미널 자동 close (handles 파일에서 마지막 handle)
+    local handles_file="$CHAT_DIR/${id}.handles"
+    if [[ -f "$handles_file" ]]; then
+      local prev_handle
+      prev_handle=$(awk -F'"' '/"handle":/{h=$0} END{if(h) print h}' "$handles_file" | awk -F'"' '{for(i=1;i<=NF;i++) if($i=="handle:")print $(i+2); next}' | head -1)
+      # 더 안정적: tail -1 로 마지막 라인 → handle 값 추출
+      prev_handle=$(tail -1 "$handles_file" | awk -F'"handle":"' '{print $2}' | awk -F'"' '{print $1}')
+      if [[ -n "$prev_handle" ]]; then
+        info "이전 역할 ($current) 터미널 close: $prev_handle"
+        orca terminal close --terminal "$prev_handle" --json >/dev/null 2>&1 || true
+      fi
+    fi
     info "다음 agent 를 자동으로 spawn 합니다..."
     "$SCRIPT_DIR/orca/spawn.sh" "$id" "$next" || {
       info "⚠ spawn 실패. 수동으로 진행:"
@@ -389,6 +409,17 @@ cmd_merge() {
   git add "$f"
   git -c core.hooksPath=/dev/null commit -m "${id} [harness]: mark merged" >/dev/null || true
 
+  # 해당 worktree 의 모든 터미널 close
+  if command -v orca >/dev/null 2>&1; then
+    if command -v cygpath >/dev/null 2>&1; then
+      WT_ORCA="$(cygpath -m "$wt_abs")"
+    else
+      WT_ORCA="$wt_abs"
+    fi
+    orca terminal close --worktree "path:$WT_ORCA" --all --json >/dev/null 2>&1 || true
+    info "  worktree 터미널 close"
+  fi
+
   # worktree + 브랜치 정리
   if [[ -d "$wt_abs" ]]; then
     git worktree remove --force "$wt_abs"
@@ -396,6 +427,9 @@ cmd_merge() {
   fi
   git branch -D "$branch" >/dev/null 2>&1 || true
   info "  branch deleted"
+
+  # handles 파일 정리
+  rm -f "$CHAT_DIR/${id}.handles"
 
   info "완료: $id merged."
 }
@@ -415,6 +449,15 @@ cmd_drop() {
   [[ "$ans" == "y" || "$ans" == "Y" ]] || { info "취소됨"; return; }
 
   cd "$REPO_ROOT"
+  # 해당 worktree 의 모든 터미널 close
+  if command -v orca >/dev/null 2>&1; then
+    if command -v cygpath >/dev/null 2>&1; then
+      WT_ORCA="$(cygpath -m "$wt_abs")"
+    else
+      WT_ORCA="$wt_abs"
+    fi
+    orca terminal close --worktree "path:$WT_ORCA" --all --json >/dev/null 2>&1 || true
+  fi
   if [[ -d "$wt_abs" ]]; then
     git worktree remove --force "$wt_abs"
   fi
@@ -429,6 +472,7 @@ cmd_drop() {
   if [[ -f "$CHAT_DIR/${id}.jsonl" ]]; then
     mv "$CHAT_DIR/${id}.jsonl" "$ARCHIVE_DIR/"
   fi
+  rm -f "$CHAT_DIR/${id}.handles"
 
   git add -A
   git -c core.hooksPath=/dev/null commit -m "${id} [harness]: drop task" >/dev/null || true
