@@ -4,7 +4,7 @@ title: 회원 모듈 — 가입/로그인/정보수정 + JWT·CSRF
 slug: member-module
 branch: task/T002-member-module
 worktree: .worktrees/T002-member-module
-status: in-flight # planning | in-flight | paused | merged | dropped | changes_requested
+status: merged # planning | in-flight | paused | merged | dropped | changes_requested
 required_roles:
   - { role: planner,    agent: claude }
   - { role: architect,  agent: claude }
