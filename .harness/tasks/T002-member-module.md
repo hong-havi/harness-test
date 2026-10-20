@@ -4,16 +4,16 @@ title: 회원 모듈 — 가입/로그인/정보수정 + JWT·CSRF
 slug: member-module
 branch: task/T002-member-module
 worktree: .worktrees/T002-member-module
-status: planning          # planning | in-flight | paused | merged | dropped
+status: changes_requested # planning | in-flight | paused | merged | dropped | changes_requested
 required_roles:
   - { role: planner,    agent: claude }
   - { role: architect,  agent: claude }
   # - { role: designer,   agent: claude, mcp: [figma] }
   - { role: backend,    agent: kiro }
   - { role: frontend,   agent: kiro }
-  - { role: qa,         agent: kiro }
+  - { role: qa,         agent: claude }
   - { role: reviewer,   agent: kiro }
-current_role: frontend
+current_role: qa
 role_history: []
 ports:
   web: 3020
@@ -25,7 +25,7 @@ blocked_by: []
 related_prd: ["§1.2", "§3", "§5.1", "§6", "§7.4", "§9"]
 priority: normal          # high | normal | low
 created_at: 2026-10-20
-updated_at: 2026-10-20
+updated_at: 2026-10-20 (qa fail — docker build)
 ---
 
 # T002 — member-module
@@ -569,24 +569,65 @@ docker compose up           # web + api + db 전체 기동
 ---
 
 ## QA report
-<qa 작성>
 
 ### 결과
-- 결정: pass | fail
+- verdict: fail
 - 일자: 2026-10-20
-- 환경: WEB=:<port>/API=:<port>/DB=:<port>
+- 환경: WEB=:3020 / API=:4020 / DB=:3308 (로컬 node 로 web+api 기동 — docker 는 아래 발견 사항 때문에 사용 불가)
 
 ### 수용 기준 검증
-- [x] <기준> — pass
-- [ ] <기준> — fail → 아래 참조
+
+**기능 (API + 프런트 rewrites 경유) — 모두 pass**
+- [x] `members` 테이블 PRD §3.1 스키마대로 생성 — `SHOW CREATE TABLE members` 로 utf8mb4_unicode_ci, UNIQUE `user_id`/`nickname`, `password_hash NOT NULL`, `created_ip NOT NULL` 확인
+- [x] `POST /auth/signup` 201 + bcrypt(`$2b$10$...`) 저장
+- [x] signup 검증 실패(user_id/password/nickname) → 400
+- [x] 중복 user_id/nickname → 409
+- [x] `POST /auth/login` 성공 바디 `{id,userId,nickname}` (토큰 미노출) + HttpOnly `access_token` + non-HttpOnly `csrf_token`
+- [x] 로그인 실패 통일 메시지 + 401
+- [x] HttpOnly 플래그 (Set-Cookie 헤더 확인)
+- [x] `GET /members/me`: 유효 쿠키 200 / 없음·조작 401 / `password_hash`·`created_ip` 미노출
+- [x] `PATCH /members/me`: nickname 중복 409 / newPassword+currentPassword 불일치 400 / 빈 바디 400 / user_id 전송 400(`forbidNonWhitelisted`) / `updated_at` 갱신
+- [x] CSRF 누락/불일치 403
+- [x] `POST /auth/logout` 두 쿠키 Max-Age=0
+- [x] 평문 비밀번호 로그 미노출 (`grep -iE "password12|brand-new-9" /tmp/api.log` 공집합)
+- [x] 가입 IP `created_ip` 기록 (XFF `10.1.2.3` → DB `10.1.2.3`)
+- [x] 프런트 가입→로그인→정보수정→로그아웃 E2E 완주 (same-origin `/api/*` rewrites 로 쿠키 전달 확인)
+
+**환경 — fail**
+- [ ] `docker compose up` 만으로 web/api/db 전체 기동 — **아래 FAIL-1 참조**
+
+**비기능 (QA 체크리스트) — pass**
+- [x] 보호 라우트 가드: 쿠키 없이 `/me` 접근 → 307 `Location: /login`
+- [x] 비로그인 보호 API 호출 → 401
+- [x] 상태 변경 요청에 CSRF 토큰 누락 → 403
+- [x] 에러 응답에 스택트레이스/민감 정보 없음 (401/403/409 메시지만)
 
 ### 발견 사항
-- 없음 또는
-- **[FAIL]** <요약>
+
+- **[FAIL-1] `docker compose build` 실패 — api/web 양쪽 Dockerfile 가 호스트 `node_modules` 를 컨테이너로 복사하면서 pnpm 설치본을 덮어씀**
   - 재현:
-    1. ...
-  - 기대: ...
-  - 실제: ...
+    1. `docker compose down -v`
+    2. `docker compose up -d db` → healthy
+    3. `docker compose run --rm api pnpm migration:run` (= 이미지 빌드 트리거)
+  - 기대: 빌드 성공 후 마이그레이션 실행
+  - 실제: 빌드 단계 `[build 6/6] RUN pnpm --filter api build` 에서
+    ```
+    Error: Cannot find module '/repo/apps/api/node_modules/@nestjs/cli/bin/nest.js'
+    ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  api@0.0.0 build: `nest build`
+    ```
+    실패. (web 도 동일 구조로 재현 예상 — `apps/web/Dockerfile` 역시 `COPY apps/web ./apps/web` 라인 존재.)
+  - 원인:
+    - 리포 루트와 `apps/api`/`apps/web` 모두 `.dockerignore` 없음.
+    - 각 Dockerfile 의 build 스테이지: `COPY --from=deps /repo /repo` 로 pnpm 이 깔아둔 `apps/api/node_modules` (`@nestjs/cli` 포함) 를 가져온 뒤, 바로 `COPY apps/api ./apps/api` 로 호스트의 Windows 용 `node_modules`(pnpm 심볼릭 링크 포함) 가 그 위에 덮여서 `@nestjs/cli/bin/nest.js` 가 사라짐.
+  - 수정 가이드 (reviewer/다음 담당 참고):
+    - 리포 루트에 `.dockerignore` 추가해 `**/node_modules`, `**/.next`, `**/dist` 를 build context 에서 제외.
+    - 또는 각 Dockerfile 의 `COPY apps/<app> ./apps/<app>` 를 `node_modules` 를 제외한 명시적 경로 복사로 분리.
+  - 영향: 수용 기준 `docker compose up 만으로 web/api/db 전체 기동` 미충족. 다른 기능 요건은 로컬 node 로 재현해 전수 pass (DB 는 compose 로, api/web 은 로컬 node 로 띄워 same-origin rewrites 플로우까지 확인).
+
+### 재현 로그 요약
+- `bash .harness/tasks/T002-verify.sh` → **PASS 31 / FAIL 0** (API 레이어)
+- `curl` 로 web 3020 → `/api/auth/signup` 201, `/api/auth/login` 200(+쿠키), `/api/members/me` 200, `/api/members/me` PATCH w/o CSRF 403 w/ CSRF 200, `/api/auth/logout` 200(+쿠키 만료), 이후 `/api/members/me` 401, `/me` 307→`/login` (middleware 가드)
+- DB: `SHOW CREATE TABLE members` DDL 일치, `password_hash` 는 `$2b$10$` bcrypt, `created_ip=10.1.2.3` (XFF 반영)
 
 ---
 
