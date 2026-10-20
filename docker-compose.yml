@@ -59,5 +59,19 @@ services:
     ports:
       - "4000:4000"
 
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      # Next.js rewrites 타겟 — compose 내부 DNS 로 api 서비스 지정.
+      API_PROXY_TARGET: http://api:4000
+    ports:
+      - "3000:3000"
+
 volumes:
   mysql_data:

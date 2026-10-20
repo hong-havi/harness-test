@@ -9,10 +9,10 @@ required_roles:
   - { role: planner,    agent: claude }
   - { role: architect,  agent: claude }
   # - { role: designer,   agent: claude, mcp: [figma] }
-  - { role: backend,    agent: claude }
+  - { role: backend,    agent: kiro }
   - { role: frontend,   agent: kiro }
-  - { role: qa,         agent: claude }
-  - { role: reviewer,   agent: claude }
+  - { role: qa,         agent: kiro }
+  - { role: reviewer,   agent: kiro }
 current_role: frontend
 role_history: []
 ports:
@@ -521,19 +521,50 @@ bash .harness/tasks/T002-verify.sh   # 31 PASS 0 FAIL
 ---
 
 ## Implementation (Frontend)
-<frontend 작성>
+<frontend (kiro) — 부분 완료, dispatch failure 로 UAT 중단 → 수동 커밋>
 
 ### 추가 라우트/페이지
-- `/path` — 설명
+- `apps/web/app/signup/page.tsx` — 가입 폼
+- `apps/web/app/login/page.tsx` — 로그인 폼
+- `apps/web/app/logout/page.tsx` — 로그아웃 (쿠키 만료)
+- `apps/web/app/me/page.tsx` — 내 정보 조회/수정
+- `apps/web/app/page.tsx` — 랜딩
+- `apps/web/app/layout.tsx` + `globals.css`
+- `apps/web/app/components/Nav.tsx` — 네비게이션
 
-### 새 환경변수
-- `NEXT_PUBLIC_...`
+### 공통
+- `apps/web/lib/api.ts` — fetch 래퍼 (`credentials: 'include'`, `X-CSRF-Token` 자동 첨부)
+- `apps/web/lib/types.ts` — API 응답 타입
+- `apps/web/middleware.ts` — 보호 라우트 가드
+- `apps/web/next.config.js` — `/api/*` → `http://api:4000` rewrites
+- `apps/web/Dockerfile`
 
-### 로컬 재현 (브라우저 시나리오)
-1. ...
+### Compose 변경
+- `docker-compose.yml` 에 `web` 서비스 추가 (port 3000, api 의존, `API_PROXY_TARGET` env)
+
+### 환경변수
+- (별도 추가 없음 — `.env.example` 은 전체 포맷팅/주석만 조정)
+
+### 로컬 재현 (QA 역할에 위임)
+```bash
+docker compose up -d db
+pnpm --filter api migration:run
+docker compose up           # web + api + db 전체 기동
+# 브라우저: http://localhost:3020  (compose 포트, api는 4020)
+# 시나리오: 가입 → 로그인 → /me 접속 → 로그아웃
+```
 
 ### 수용 기준 자가 검증
-- [x] ...
+- [ ] **미완료** — kiro 세션이 UAT 중 dispatch failure 로 중단
+- [ ] 가입/로그인/로그아웃/정보수정 플로우: QA 가 검증
+- [ ] HttpOnly 쿠키 (`document.cookie` 미노출): QA 검증
+- [ ] CSRF 토큰 전송 확인: QA 검증
+- [ ] `dangerouslySetInnerHTML` 미사용: 코드 검색으로 확인됨
+
+### QA 로의 핸드오프 노트
+- kiro frontend 세션이 코드 작성은 완료했으나 end-to-end UAT 는 수행 못 함.
+- QA 가 docker compose up 로 전체 기동 후 수용 기준 전수 검증 필요.
+- api 는 이전 세션에서 port 4020 LISTEN 확인됨 (수동 kill 완료).
 
 ---
 
