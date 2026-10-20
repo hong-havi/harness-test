@@ -11,21 +11,21 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# worktree 안에서 호출돼도 메인 레포 root 를 찾도록 git-common-dir 사용.
-# - main 에서는 ".git" (상대) 반환 → SCRIPT_DIR 기반으로 유도
-# - worktree 에서는 "<main-repo>/.git" (절대) 반환
+# 메인 레포 root (worktree 경로/handles/agents 디렉토리 공통 위치)
 GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir 2>/dev/null || echo "")"
 if [[ "$GIT_COMMON_DIR" = /* || "$GIT_COMMON_DIR" =~ ^[A-Z]:/ ]]; then
-  # 절대 경로 → worktree 에서 호출됨, parent 가 main repo
-  REPO_ROOT="$(dirname "$GIT_COMMON_DIR")"
+  MAIN_REPO_ROOT="$(dirname "$GIT_COMMON_DIR")"
 else
-  # 상대 경로 → main 에서 호출. SCRIPT_DIR 기준
-  REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+  MAIN_REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 fi
 
-TASKS_DIR="$REPO_ROOT/.harness/tasks"
-AGENTS_DIR="$REPO_ROOT/scripts/agents"
-WORKTREES_DIR="$REPO_ROOT/.worktrees"
+# task.md 의 "live" 버전은 각 task 브랜치(= worktree)에 있음.
+# main 의 task.md 는 생성 시 initial 상태로만 있고, planner 가 변경한
+# required_roles/agent 매핑은 worktree 쪽에만 있으므로 spawn 은
+# WORKTREE 의 task.md 를 읽어야 한다.
+
+AGENTS_DIR="$MAIN_REPO_ROOT/scripts/agents"
+WORKTREES_DIR="$MAIN_REPO_ROOT/.worktrees"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 info() { echo "→ $*"; }
@@ -33,8 +33,19 @@ info() { echo "→ $*"; }
 TASK_ID="${1:?Usage: $0 <task-id> [role]}"
 ROLE="${2:-}"
 
-TASK_FILE=$(find "$TASKS_DIR" -maxdepth 1 -name "${TASK_ID}-*.md" 2>/dev/null | head -1)
-[[ -n "$TASK_FILE" ]] || die "task 파일 없음: $TASK_ID"
+# 1) main 의 task.md 에서 slug 추출 (파일 존재 확인 + 경로 유도용)
+TASK_FILE_MAIN=$(find "$MAIN_REPO_ROOT/.harness/tasks" -maxdepth 1 -name "${TASK_ID}-*.md" 2>/dev/null | head -1)
+[[ -n "$TASK_FILE_MAIN" ]] || die "task 파일 없음 (main): $TASK_ID"
+SLUG="$(basename "$TASK_FILE_MAIN" .md)"   # T002-member-module
+SLUG="${SLUG#*-}"                            # member-module
+
+# 2) WORKTREE 의 task.md 를 live 버전으로 읽음
+WORKTREE_PATH="$WORKTREES_DIR/${TASK_ID}-${SLUG}"
+TASK_FILE="$WORKTREE_PATH/.harness/tasks/${TASK_ID}-${SLUG}.md"
+if [[ ! -f "$TASK_FILE" ]]; then
+  info "⚠ worktree task.md 없음, main 버전으로 폴백: $TASK_ID"
+  TASK_FILE="$TASK_FILE_MAIN"
+fi
 
 # current_role 조회 (role 미지정 시)
 if [[ -z "$ROLE" ]]; then
@@ -85,10 +96,6 @@ AGENT=$(awk -v target="$ROLE" '
 ADAPTER="$AGENTS_DIR/${AGENT}.sh"
 [[ -x "$ADAPTER" ]] || die "agent 어댑터 없음 또는 실행 불가: $ADAPTER"
 
-# worktree 경로 (slug 포함)
-SLUG=$(basename "$TASK_FILE" .md)        # T001-signup-api
-SLUG="${SLUG#*-}"                         # signup-api
-WORKTREE_PATH="$WORKTREES_DIR/${TASK_ID}-${SLUG}"
 [[ -d "$WORKTREE_PATH" ]] || die "worktree 경로 없음: $WORKTREE_PATH"
 
 # Orca 는 Windows 에서 "D:/path/..." 포맷(mixed, drive letter 대문자, forward slash)을 요구함.

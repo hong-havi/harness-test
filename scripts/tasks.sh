@@ -19,19 +19,22 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# worktree 안에서 호출돼도 메인 레포 root 를 찾음 (spawn.sh 와 동일 로직)
+# task.md 는 LOCAL (worktree 또는 main) 에서 읽기/쓰기 — 역할 변경이 지역 브랜치에서 발생
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# worktrees/handles 경로는 MAIN 공유 — 모든 역할이 같은 위치 사용
 GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir 2>/dev/null || echo "")"
 if [[ "$GIT_COMMON_DIR" = /* || "$GIT_COMMON_DIR" =~ ^[A-Z]:/ ]]; then
-  REPO_ROOT="$(dirname "$GIT_COMMON_DIR")"
+  MAIN_REPO_ROOT="$(dirname "$GIT_COMMON_DIR")"
 else
-  REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+  MAIN_REPO_ROOT="$REPO_ROOT"
 fi
 
 HARNESS_DIR="$REPO_ROOT/.harness"
 TASKS_DIR="$HARNESS_DIR/tasks"
-CHAT_DIR="$HARNESS_DIR/chat"
-ARCHIVE_DIR="$HARNESS_DIR/archive"
-WORKTREES_DIR="$REPO_ROOT/.worktrees"
+CHAT_DIR="$MAIN_REPO_ROOT/.harness/chat"      # handles 는 main 에 공유
+ARCHIVE_DIR="$MAIN_REPO_ROOT/.harness/archive"
+WORKTREES_DIR="$MAIN_REPO_ROOT/.worktrees"
 TEMPLATE_TASK="$HARNESS_DIR/templates/task.md"
 TEMPLATE_COMPOSE="$HARNESS_DIR/templates/docker-compose.override.yml.tmpl"
 MAIN_BRANCH="main"
