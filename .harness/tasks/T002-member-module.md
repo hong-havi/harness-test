@@ -114,30 +114,268 @@ PRD §3(회원), §5.1(Auth/Member), §6(공통 비기능), §7.4(TypeORM 세부
 ---
 
 ## Design
-<architect 작성>
+
+### 결정 (Plan Open Questions 응답)
+
+| # | 질문 | 결정 | 사유 |
+|---|------|------|------|
+| §10-1 | `X-Forwarded-For` 신뢰 정책 | `app.set('trust proxy', 1)` (단일 홉) + `req.ip` 사용. 추가 홉(LB/CDN) 투입 시 홉 수 상향 + 신뢰 프록시 whitelist 명시 재검토 (운영 전환 조건) | 로컬 Docker 운용 시 브라우저 → `web`(Next.js rewrites) → `api`. API 입장에서 1홉. 임의 XFF 위조는 호스트 네트워크를 거쳐야 하므로 1홉 신뢰로 충분 |
+| §10-4 | 브라우저 → API 경로 | **Next.js rewrites same-origin** 채택 (PRD 기본안) | 쿠키/CORS 단순화. CORS 설정은 보조층으로만 유지(명시 origin + credentials:true) |
+| §10-5 | 마이그레이션 실행 주체 | **별도 one-off 명령** `docker compose run --rm api pnpm migration:run`. README/Compose 주석에 명시. `api` 컨테이너 start-up hook은 사용하지 않음 | 스키마 변경을 명시적 커밋/명령으로 감사. start-up hook은 DB healthcheck 레이스 가능성 + 실패 가시성 저하 |
 
 ### 데이터 모델
-<엔티티/스키마 변경 — DDL 수준>
+
+#### DDL (`members`)
+```sql
+CREATE TABLE `members` (
+  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`       VARCHAR(32)     NOT NULL,
+  `password_hash` VARCHAR(255)    NOT NULL,
+  `nickname`      VARCHAR(32)     NOT NULL,
+  `created_at`    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `created_ip`    VARCHAR(45)     NOT NULL,
+  `updated_at`    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                           ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_members_user_id` (`user_id`),
+  UNIQUE KEY `uk_members_nickname` (`nickname`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+#### TypeORM 엔티티 매핑 (시그니처 수준)
+```ts
+@Entity({ name: 'members' })
+class MemberEntity {
+  @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true }) id: string;    // bigint → string
+  @Column({ name: 'user_id', type: 'varchar', length: 32, unique: true }) userId: string;
+  @Column({ name: 'password_hash', type: 'varchar', length: 255, select: false }) passwordHash: string;
+  @Column({ name: 'nickname', type: 'varchar', length: 32, unique: true }) nickname: string;
+  @CreateDateColumn({ name: 'created_at', type: 'datetime' }) createdAt: Date;
+  @Column({ name: 'created_ip', type: 'varchar', length: 45 }) createdIp: string;
+  @UpdateDateColumn({ name: 'updated_at', type: 'datetime' }) updatedAt: Date;
+}
+```
+- `password_hash`는 **`select: false`** 로 기본 조회에서 제외. 로그인 시에만 `createQueryBuilder().addSelect('m.password_hash')`로 로딩.
+- `id`는 TypeORM/MySQL bigint 특성상 **문자열**로 다룬다 (JWT `sub`에 그대로 문자열 저장).
 
 ### API 계약
-| Method | Path | Auth | 요청 DTO | 응답 | 상태 코드 |
 
-### 흐름
-- 1. ...
-- 2. ...
+#### 공통 응답 규약
+- 성공: 2xx + JSON
+- 에러: NestJS 기본 `{ statusCode, message, error }` — `ValidationPipe`가 400 매핑, 그 외는 커스텀 예외 매핑
+
+#### DTO (class-validator 규칙)
+```ts
+// signup.dto.ts
+class SignupDto {
+  @IsString() @Matches(/^[A-Za-z0-9]{4,32}$/) userId: string;
+  @IsString() @MinLength(8) @MaxLength(72)
+    @Matches(/[A-Za-z]/) @Matches(/[0-9]/) password: string;
+  @IsString() @Length(2, 32) nickname: string;
+}
+
+// login.dto.ts
+class LoginDto {
+  @IsString() userId: string;
+  @IsString() password: string;         // 형식 검증 X — 성공/실패 메시지 통일 유지
+}
+
+// update-me.dto.ts (전부 optional, 최소 1필드)
+class UpdateMeDto {
+  @IsOptional() @IsString() @Length(2, 32) nickname?: string;
+  @IsOptional() @IsString() @MinLength(8) @MaxLength(72)
+    @Matches(/[A-Za-z]/) @Matches(/[0-9]/) newPassword?: string;
+  @ValidateIf(o => o.newPassword !== undefined) @IsString() currentPassword?: string;
+}
+```
+- `password` 최대 길이 72자: **bcrypt 72바이트 제한**에 맞춘 명시적 상한. Plan의 "8자 이상 영문+숫자" 하한은 유지.
+- `UpdateMeDto`: `newPassword` 제공 시 `currentPassword`는 **DTO 레벨에서 필수**(ValidateIf). 서비스 레벨에서 재확인.
+- 서비스 레이어에서 추가 체크: 바디가 완전 비면 **400**.
+
+#### 엔드포인트 표
+
+| Method | Path | Auth | 요청 | 성공 응답 | 상태 코드 |
+|---|---|---|---|---|---|
+| POST | `/auth/signup` | - | `SignupDto` | `{ id, userId, nickname }` | 201 success / 400 유효성 / 409 중복 |
+| POST | `/auth/login` | - | `LoginDto` | 바디 `{ id, userId, nickname }` + `Set-Cookie: access_token`, `Set-Cookie: csrf_token` | 200 / 400 DTO위반 / 401 자격증명 불일치 |
+| POST | `/auth/logout` | JWT | 없음 | `{ ok: true }` + `Set-Cookie: access_token=; Max-Age=0`, `Set-Cookie: csrf_token=; Max-Age=0` | 200 / 401 |
+| GET | `/members/me` | JWT | 없음 | `{ id, userId, nickname, createdAt, updatedAt }` | 200 / 401 |
+| PATCH | `/members/me` | JWT + CSRF | `UpdateMeDto` | `{ id, userId, nickname, createdAt, updatedAt }` | 200 / 400 유효성·currentPassword불일치 / 401 / 403 CSRF / 409 nickname 중복 |
+
+- **보안 레벨 명시**: `createdIp`는 서버 내부 필드로, `GET /members/me` 응답에 **포함하지 않는다**. `password_hash`는 어떤 응답에도 포함되지 않는다.
+- `/auth/signup` 응답에 토큰 미발급 (Plan — "자동 로그인하지 않음").
+
+#### 쿠키 사양
+
+| 쿠키 | HttpOnly | Secure | SameSite | Path | Max-Age | 비고 |
+|---|---|---|---|---|---|---|
+| `access_token` | **true** | `COOKIE_SECURE` env | Lax | `/` | 3600 | JWT HS256, payload `{ sub, user_id, nickname, iat, exp }` |
+| `csrf_token` | **false** | `COOKIE_SECURE` env | Lax | `/` | 3600 | `crypto.randomBytes(32).toString('hex')` — 로그인마다 재발급 |
+
+- 두 쿠키 **수명 동기화**(둘 다 1h). access_token 만료 시 csrf_token은 쓸모없어지므로 수명 일치가 자연스러움.
+- 로그아웃은 두 쿠키 모두 Max-Age=0 세팅.
+
+### 흐름 (시퀀스)
+
+**가입 (`POST /auth/signup`)**
+1. `ValidationPipe` → `SignupDto` 검증 (400 매핑)
+2. `AuthService.signup(dto, req)`:
+   1. `userId`/`nickname` 중복 검사 (각 1쿼리) → 중복이면 `ConflictException('user_id|nickname 중복')` → **409**
+   2. `bcrypt.hash(password, 10)` 계산
+   3. `createdIp = req.ip` (Nest가 `trust proxy=1`로 XFF 해석)
+   4. `members` INSERT. MySQL 레벨 UNIQUE 위반(동시성 race) 시 `QueryFailedError.code === 'ER_DUP_ENTRY'` → 409로 재매핑
+3. 응답 바디: `{ id, userId, nickname }` (201)
+
+**로그인 (`POST /auth/login`)**
+1. `LoginDto` 검증 (DTO 레벨 통과)
+2. `AuthService.login(dto, res)`:
+   1. `members`에서 `userId`로 조회 (`addSelect('password_hash')`)
+   2. 회원 없음 또는 `bcrypt.compare(password, hash) === false` → `UnauthorizedException('아이디 또는 비밀번호가 일치하지 않습니다.')` → **401**. 두 경우 **동일 메시지/상태**.
+   3. JWT 발급: `jwt.sign({ sub: id, user_id, nickname }, JWT_SECRET, { algorithm:'HS256', expiresIn:'1h' })`
+   4. `csrf = randomBytes(32).toHex()`
+   5. `res.cookie('access_token', jwt, {httpOnly:true, secure, sameSite:'lax', path:'/', maxAge:3600_000})`
+   6. `res.cookie('csrf_token', csrf, {httpOnly:false, secure, sameSite:'lax', path:'/', maxAge:3600_000})`
+3. 응답 바디: `{ id, userId, nickname }` — **토큰 미포함**
+
+**로그아웃 (`POST /auth/logout`)**
+1. `AuthGuard('jwt')` 통과 (401이면 미통과)
+2. 두 쿠키 `Max-Age=0` 세팅
+3. `{ ok: true }` 반환
+
+**내 정보 조회 (`GET /members/me`)**
+1. `AuthGuard('jwt')` → `req.user = { sub, user_id, nickname }`
+2. `members`에서 `id = req.user.sub` 조회 (`password_hash`, `created_ip` 제외)
+3. 반환
+
+**내 정보 수정 (`PATCH /members/me`)**
+1. `AuthGuard('jwt')` → `CsrfGuard` 순
+   - `CsrfGuard`: 쿠키 `csrf_token`과 헤더 `X-CSRF-Token` 둘 다 존재 + 상수시간 비교(`crypto.timingSafeEqual`) 일치 → 통과. 아니면 **403**.
+2. `UpdateMeDto` 검증
+3. `MembersService.updateMe(id, dto)`:
+   1. `nickname` 제공 시 중복 체크 (본인 레코드 제외) → 중복이면 **409**
+   2. `newPassword` 제공 시: `addSelect('password_hash')`로 로드 → `bcrypt.compare(dto.currentPassword, hash)` 실패면 **400** (`BadRequestException('현재 비밀번호가 일치하지 않습니다.')`)
+   3. 변경사항 적용 → UPDATE (`updated_at` ON UPDATE로 자동 갱신)
+4. 조회 후 반환
 
 ### 보안 / 에러
-- 입력 검증 지점:
-- 권한 체크:
-- 에러 응답:
 
-### 마이그레이션 (DB 변경 있을 때)
-- 이름: `<timestamp>-<name>`
-- Up: ...
-- Down: ...
+#### 입력 검증 지점
+- **1차**: `ValidationPipe({ whitelist:true, forbidNonWhitelisted:true, transform:true })` + `class-validator` DTO (userId/password/nickname 포맷)
+- **2차 (DB UNIQUE)**: 중복은 사전 조회 + MySQL UNIQUE 제약(race 대비)으로 이중화
 
-### 테스트 포인트
-- QA가 확인할 지점 ...
+#### 권한 체크 (Guard 매트릭스)
+
+| 라우트 | Guards (적용 순서) |
+|---|---|
+| `POST /auth/signup` | 없음 |
+| `POST /auth/login` | 없음 |
+| `POST /auth/logout` | `AuthGuard('jwt')` |
+| `GET /members/me` | `AuthGuard('jwt')` |
+| `PATCH /members/me` | `AuthGuard('jwt')` → `CsrfGuard` |
+
+- **CSRF Guard는 상태변경에만** 적용. 조회(`GET /members/me`), 로그인/가입(쿠키 미발급 상태)은 제외. 로그아웃은 PRD §5.1 표에 CSRF 미표기 → **CSRF 미적용** (쿠키 삭제라 리스크 낮음).
+- `JwtStrategy`는 **cookieExtractor**로 `req.cookies.access_token`에서만 토큰을 꺼낸다. Authorization 헤더 fallback 없음(혼용 공격면 방지).
+
+#### 민감 정보 흐름
+- `password` 평문: HTTPS 바디 → 즉시 bcrypt 해시 → GC. 로그에 미기록 (`main.ts`에서 글로벌 로거 수준 유지, 요청 바디 로그 금지).
+- `password_hash`: 응답 DTO 변환 과정에서 제외. 엔티티 선택 자체도 `select: false`.
+- JWT: 응답 바디 미포함, HttpOnly 쿠키로만 전달.
+- 에러 메시지: 401 로그인 실패는 사유 미노출. 500은 스택트레이스 노출 금지(기본 Nest filter 유지 + production에서 message만 노출).
+
+#### 에러 응답 매핑
+
+| 상황 | HTTP | message 예 |
+|---|---|---|
+| DTO 위반 | 400 | class-validator 메시지 |
+| `newPassword` 있는데 `currentPassword` 불일치 | 400 | `현재 비밀번호가 일치하지 않습니다.` |
+| 수정 바디가 빈 경우 | 400 | `수정할 항목이 없습니다.` |
+| 토큰 없음/만료/위조 | 401 | `인증이 필요합니다.` |
+| 로그인 자격증명 불일치 | 401 | `아이디 또는 비밀번호가 일치하지 않습니다.` (존재 여부 비노출) |
+| CSRF 누락/불일치 | 403 | `유효하지 않은 요청입니다.` |
+| `user_id` 중복 | 409 | `이미 사용 중인 아이디입니다.` |
+| `nickname` 중복 | 409 | `이미 사용 중인 닉네임입니다.` |
+
+#### 전역 설정 (`main.ts`)
+- `app.use(cookieParser())`
+- `app.set('trust proxy', 1)` — XFF 1홉 신뢰
+- `app.useGlobalPipes(new ValidationPipe({ whitelist:true, forbidNonWhitelisted:true, transform:true }))`
+- `app.enableCors({ origin: process.env.CORS_ORIGIN, credentials: true })` — rewrites 사용 중이어도 보조층 유지
+- `cookie.secure`는 `COOKIE_SECURE === 'true'`로 분기 (dev: false)
+
+### 마이그레이션
+
+- **파일**: `apps/api/src/migrations/<timestamp>-create-members.ts` (timestamp는 생성 시 TypeORM CLI가 부여)
+- **Up**:
+  ```sql
+  CREATE TABLE members (...);  -- 위 DDL과 동일
+  ```
+- **Down**:
+  ```sql
+  DROP TABLE members;
+  ```
+- `synchronize: false`, `migrations: ['dist/migrations/*.js']` (빌드 산출물에서 로드)
+- 실행: `docker compose run --rm api pnpm migration:run`
+- 롤백: `docker compose run --rm api pnpm migration:revert` (수동, 범위 밖 운영 자동화 제외)
+
+### 프런트엔드 상태/흐름 (설계 수준)
+
+- 라우트: `/signup`, `/login`, `/me`, `/logout`
+- 보호 라우트: `/me`는 미인증 시 `/login`으로 redirect. 구현은 **Next.js `middleware.ts`에서 쿠키 유무로 1차** + **`/members/me` 호출 401 응답으로 2차**. 서버 Guard가 최종 권위.
+- API 래퍼 `apps/web/lib/api.ts`:
+  - `credentials: 'include'`
+  - 상태변경 메소드일 때 `document.cookie`에서 `csrf_token` 추출 → `X-CSRF-Token` 자동 첨부
+- rewrites: `/api/:path*` → `http://api:4000/:path*` (SSR/서버 fetch는 Docker 내부 DNS 그대로, 브라우저는 same-origin)
+- 상태 분기: 각 폼 default/loading/error/success. 로그인 성공 → `/me`로 push.
+
+### 테스트 포인트 (QA 참조)
+
+**DB/마이그레이션**
+- `members` 테이블 스키마가 DDL과 일치: `SHOW CREATE TABLE members`로 컬럼/인덱스/CHARSET 확인
+- `UNIQUE` 인덱스가 `user_id`, `nickname` 양쪽에 존재
+
+**가입 (`POST /auth/signup`)**
+- 정상 입력 → 201 + DB row 1개 생성 + `password_hash`가 bcrypt 포맷(`$2a$`/`$2b$...`)
+- `user_id` 포맷 위반, `password` 8자 미만, 영문/숫자 미조합, `nickname` 길이 위반 각각 400
+- 동일 `user_id`로 2회 가입 → 2회차 409
+- 동일 `nickname`으로 2회 가입 → 2회차 409
+- `curl -H "X-Forwarded-For: 10.1.2.3" ...` 로 가입 → `created_ip`가 "10.1.2.3"로 기록 (trust proxy=1 확인)
+
+**로그인 (`POST /auth/login`)**
+- 성공 → 200, 바디에 토큰 **미포함**, `Set-Cookie: access_token=...; HttpOnly`, `Set-Cookie: csrf_token=...` (HttpOnly 아님)
+- 없는 `user_id` 로그인 → 401, 메시지가 비밀번호 불일치 케이스와 **동일**
+- 비밀번호 불일치 → 401, 동일 메시지
+
+**보호 라우트 / JWT**
+- 쿠키 없이 `GET /members/me` → 401
+- 조작된 쿠키 → 401
+- 만료 토큰(JWT_EXPIRES_IN을 짧게 override 후) → 401
+- 정상 쿠키 → 200 + `{ id, userId, nickname, createdAt, updatedAt }` (password_hash, created_ip 제외)
+- 브라우저 콘솔 `document.cookie`에 `access_token`이 **나타나지 않음**
+
+**CSRF**
+- 로그인 → `PATCH /members/me` 호출 시:
+  - 헤더 `X-CSRF-Token` 생략 → 403
+  - 헤더 값이 쿠키와 불일치 → 403
+  - 일치 → 성공
+- GET은 CSRF 없이 통과
+
+**정보 수정 (`PATCH /members/me`)**
+- `nickname`만 변경 → 200, DB `updated_at` 갱신
+- 중복 `nickname`으로 변경 → 409
+- `newPassword` + 올바른 `currentPassword` → 200, 새 비번으로 로그인 가능
+- `newPassword` + 틀린 `currentPassword` → 400
+- 빈 바디 → 400
+- `user_id` 포함해 전송 → `forbidNonWhitelisted`로 400 (또는 whitelist로 silently 제거되지 않음을 확인)
+
+**로그아웃**
+- `POST /auth/logout` 응답 `Set-Cookie: access_token=; Max-Age=0`
+- 이후 `GET /members/me` → 401
+
+**E2E (브라우저)**
+- `/signup` → `/login` → `/me` → 수정 → `/logout` 완주
+
+**로그 점검**
+- `docker compose logs api | grep -i password` → 평문 비밀번호가 어디에도 없어야 함
 
 ---
 
