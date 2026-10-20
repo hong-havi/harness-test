@@ -51,7 +51,9 @@ cat <<EOF
 
 \`tasks.sh advance\` 가 아니라 리뷰 통과 시 \`tasks.sh merge\` 를 호출합니다 (rebase + ff-only). 상세는 \`.harness/roles/reviewer.md\` 참조.
 
-## 자동 spawn 비활성화 (디버깅)
+## 반드시 지킬 것
 
-사람의 개입이 필요하면 \`./scripts/tasks.sh advance --no-spawn\` 으로 커서만 이동하고 다음 세션은 수동으로 띄울 수 있습니다.
+- \`tasks.sh advance\` 를 **플래그 없이** 호출하세요. \`--no-spawn\` 은 사람 디버깅용이며 agent가 쓰면 역할 체인이 끊어집니다.
+- 작업 결과물을 반드시 커밋한 뒤 \`advance\` 하세요. uncommitted 상태에서 advance 하면 다음 역할이 변경을 못 봅니다.
+- 세션 자체 종료는 agent CLI 가 자동으로 처리. shell 을 수동으로 \`exit\` 할 필요 없음.
 EOF

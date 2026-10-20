@@ -30,8 +30,9 @@ coordinator로부터 받은 요구를 **구현 가능한 명세**로 바꾸고, 
 4. **예상 파일 목록** — 변경될 수 있지만 가이드로 제공.
 5. **의존**(blocked_by) — 다른 task가 선행되어야 하면 명시.
 6. task.md의 Plan 섹션에 모두 기록.
-7. chat에 완료 보고 (`deliver`) + 다음 역할(architect) 에게 dispatch 요청을 coordinator에 보냄.
-8. 세션 종료.
+7. chat 에 완료 보고 (`deliver`).
+8. **당신이 직접** `./scripts/tasks.sh advance` 호출 (coordinator 를 거치지 않음). 자동으로 architect 세션이 spawn 됩니다.
+9. 세션 종료.
 
 ## 하지 말 것
 - 코드/설정/인프라 파일 수정

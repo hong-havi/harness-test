@@ -10,7 +10,19 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# worktree 안에서 호출돼도 메인 레포 root 를 찾도록 git-common-dir 사용.
+# - main 에서는 ".git" (상대) 반환 → SCRIPT_DIR 기반으로 유도
+# - worktree 에서는 "<main-repo>/.git" (절대) 반환
+GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir 2>/dev/null || echo "")"
+if [[ "$GIT_COMMON_DIR" = /* || "$GIT_COMMON_DIR" =~ ^[A-Z]:/ ]]; then
+  # 절대 경로 → worktree 에서 호출됨, parent 가 main repo
+  REPO_ROOT="$(dirname "$GIT_COMMON_DIR")"
+else
+  # 상대 경로 → main 에서 호출. SCRIPT_DIR 기준
+  REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+fi
+
 TASKS_DIR="$REPO_ROOT/.harness/tasks"
 AGENTS_DIR="$REPO_ROOT/scripts/agents"
 WORKTREES_DIR="$REPO_ROOT/.worktrees"

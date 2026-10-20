@@ -49,7 +49,7 @@
    - 새 마이그레이션 파일명
    - 수용 기준 자가 검증 결과
    - 로컬 재현 명령
-8. chat `deliver` + coordinator에 다음 역할 요청.
+8. chat `deliver` → **당신이 직접** `./scripts/tasks.sh advance` 호출 → 다음 역할 agent 자동 spawn. 세션 종료.
 
 ## 하지 말 것
 - 범위 밖 파일 수정

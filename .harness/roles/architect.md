@@ -33,7 +33,8 @@ planner의 명세를 받아 **어떻게 만들지** 설계한다. 데이터 모�
    - synchronize: false, 명시적 마이그레이션 파일 이름/방향
 5. **테스트 포인트** 명시 (QA가 수용 기준을 어떤 수준에서 확인할지)
 6. task.md의 Design 섹션에 기록.
-7. chat에 `deliver` + coordinator에 다음 역할 요청.
+7. chat 에 `deliver`.
+8. **당신이 직접** `./scripts/tasks.sh advance` 호출 → 다음 역할 agent 자동 spawn. 세션 종료.
 
 ## 하지 말 것
 - 구현 코드 작성 (의사 코드/시그니처까지만)

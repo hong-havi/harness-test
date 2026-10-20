@@ -59,8 +59,8 @@ docker compose up               # web + api
      실제: 500 (스택트레이스 노출)
    ```
 3. 결정:
-   - 전부 pass → status 그대로 (reviewer로 넘어감), chat `deliver`
-   - 1개라도 fail → status `rework`, assignee는 원 담당(backend/frontend), chat `handoff`
+   - 전부 pass → chat `deliver` → **당신이 직접** `./scripts/tasks.sh advance` 호출 → reviewer agent 자동 spawn. 세션 종료.
+   - 1개라도 fail → status `rework`, chat `handoff` + 재현 절차 명시. advance 호출 금지 (원 담당이 다시 작업해야 함).
 4. 수정 후 재검증은 **새 라운드**(QA report v2 섹션)로 기록.
 
 ## 하지 말 것
