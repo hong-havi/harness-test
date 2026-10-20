@@ -1,0 +1,21 @@
+{
+  "name": "harness-test",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20 <23"
+  },
+  "scripts": {
+    "api:dev": "pnpm --filter api start:dev",
+    "api:test": "pnpm --filter api test",
+    "api:migration:run": "pnpm --filter api migration:run",
+    "api:migration:revert": "pnpm --filter api migration:revert"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "bcrypt",
+      "@nestjs/core"
+    ]
+  }
+}
