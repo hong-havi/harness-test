@@ -136,24 +136,95 @@ tasks.sh 변경:
 - [x] agent 매핑 변경 시(backend→codex, qa→kiro) 올바른 어댑터가 선택됨 (DRY_RUN 검증)
 - [ ] 실제 agent 세션에서 end-to-end 돌림 (user가 수행 예정)
 
-### Phase 3 — Slack + Coordinator 자동화
+### Phase 3 — Slack + Coordinator + orchestration 통합
 
-**목표**: user가 Slack 채널에서만 상호작용. Coordinator가 자동으로 task 생성·역할 전환·리포팅.
+**목표**: user가 Slack 채널에서만 상호작용. Coordinator 세션이 orca orchestration primitives 로 role worker 를 supervised 하게 운영.
 
-파일:
-- `scripts/slack/send.sh`, `scripts/slack/listen.sh`
-- `scripts/chat.sh` 에 Slack 미러 어댑터 추가 (이미 작성된 JSONL에 abstract만 걸침)
-- `scripts/coord.sh` — dispatch 자동 루프
-- `.env.example` 에 `SLACK_BOT_TOKEN` 추가
-- `.harness/roles/coordinator.md` 에 Slack 상호작용 섹션 보강
+#### 3.1 Coordinator 세션 모델
 
-**사전 준비 (user)**:
-- Slack 워크스페이스 + 봇 생성, 토큰 발급
-- 채널: `#harness-coord` + 자동 생성될 `#task-T###`
+- **별도 Orca 터미널 1개** (user가 attach 하는 창). 장기 실행 claude 세션.
+- 역할:
+  - Slack `#harness-coord` listen (webhook 또는 polling)
+  - user 메시지 분류 → 신규 task 생성 / 기존 task 메시지 라우팅
+  - `orca orchestration run-create` 로 task 당 Run 생성
+  - `worker-start --agent <id>` 로 각 role worker spawn (supervised)
+  - `check --wait` 로 `worker_done`/`escalation`/`question` 소비
+  - Slack 에 리포트 포스트
 
-**검증**:
-- Slack `#harness-coord`에 "회원가입 만들어줘" 입력 → coordinator가 T001 생성 → `#task-T001-signup` 자동 생성 → 역할 전환마다 메시지 포스트
-- Slack 메시지는 로컬 `.harness/chat/T###.jsonl` 과 동기
+#### 3.2 Role worker 모델 (orchestration 통합)
+
+**claude/codex 역할**:
+- `worker-start --spec "<bootstrap prompt>" --worktree path:<wt> --agent claude`
+- preamble 에 Task+Dispatch ID 자동 주입 → worker 가 `worker_done` 호출 가능
+- `_bootstrap-prompt.sh` 를 "orchestration-aware" 로 업데이트 (`advance` 대신 `worker_done` 호출 지시)
+
+**kiro 역할** (orca native agent 아님):
+- `orca terminal create --command "kiro-cli chat ..."` 로 터미널 생성
+- `worker-start --terminal <handle>` 로 Task+Dispatch 등록 (supervised)
+- kiro-cli 는 orchestration IDs 를 모르므로 `tasks.sh advance` 가 `worker_done` 을 **대신 호출** (wrapper 역할)
+
+**Agent 간 선택 제약** (Phase 2 learning):
+- QA/reviewer 는 긴 orchestration 이라 **claude 권장** (`.harness/AGENTS.md`)
+- kiro 는 "코드 작성" 역할에만 (frontend scaffold OK, UAT NG)
+
+#### 3.3 Chat 로그 2-way sync
+
+- Local: `.harness/chat/T###.jsonl` (현재 그대로)
+- Slack: `#task-T###` 채널의 스레드
+- 어댑터: `scripts/chat.sh append` 가 Slack 토큰 있으면 slack API 로 미러
+- 네트워크 실패 시 로컬만 쌓고 재시도 큐 (`.harness/chat/T###.pending`)
+
+#### 3.4 파일 계획
+
+**신규**:
+- `scripts/coord.sh` — coordinator 메인 루프 (listen + dispatch + check-wait)
+- `scripts/slack/send.sh` — Slack bot message post
+- `scripts/slack/listen.sh` — Slack events API polling 또는 webhook endpoint
+- `scripts/orchestration/worker-start.sh` — orca orchestration 래퍼 (현재 agents/*.sh 통합)
+- `scripts/orchestration/check-wait.sh` — coordinator 폴링 헬퍼
+
+**수정**:
+- `scripts/agents/_bootstrap-prompt.sh` — worker_done 호출 지시 추가
+- `scripts/tasks.sh advance` — `worker_done` wrapper 호출 (kiro 폴백 포함)
+- `scripts/tasks.sh new` — `run-create` + `task-create` + 초기 worker-start
+- `scripts/chat.sh append` — Slack 미러 토큰 있을 때
+- `.harness/roles/coordinator.md` — Slack 상호작용 섹션
+
+#### 3.5 사전 준비 (user)
+
+- Slack 워크스페이스 + Bot App 생성
+- Scopes: `chat:write`, `channels:read`, `channels:history`, `channels:manage` (채널 자동 생성용), `groups:write` (private channel)
+- Bot token (`xoxb-...`) → `.env` 의 `SLACK_BOT_TOKEN`
+- 채널 전략:
+  - `#harness-coord` 수동 생성 — user ↔ coordinator 대화
+  - `#task-T###-<slug>` task 생성 시 자동 생성
+
+#### 3.6 Phase 3 수용 기준
+
+- [ ] Slack `#harness-coord` 에 "회원가입 만들어줘" → coordinator 세션이 즉시 응답 + T### 생성
+- [ ] 각 role 세션이 **orca orchestration worker** 로 spawn (`worker-list` 에서 확인됨)
+- [ ] role 완료 시 `worker_done` 호출로 coordinator 에 settle 보고 (claude/codex 네이티브, kiro 는 tasks.sh wrapper)
+- [ ] coordinator 가 다음 role 자동 spawn + Slack 에 전환 메시지 포스트
+- [ ] Slack 과 로컬 `.harness/chat/T###.jsonl` 양쪽에 메시지 기록됨
+- [ ] 최종 merge 완료 시 coordinator 가 Slack 에 요약 리포트 (SHA + 변경 범위)
+
+#### 3.7 Phase 3 진행 단계 (하위 서브태스크)
+
+| 서브 | 내용 | 선행 |
+|------|------|------|
+| 3-A | Slack 어댑터 (`scripts/slack/*`) + 토큰 셋업 가이드 | - |
+| 3-B | orchestration 래퍼 (`worker-start` 통합) + bootstrap 프롬프트 업데이트 | - |
+| 3-C | `tasks.sh advance` 가 `worker_done` 호출 (kiro wrapper 포함) | 3-B |
+| 3-D | Coordinator 세션 (`scripts/coord.sh`) — listen + dispatch + check-wait 루프 | 3-A, 3-B, 3-C |
+| 3-E | `chat.sh` Slack 미러 어댑터 | 3-A |
+| 3-F | End-to-end 검증 (실 Slack + 실 task 1건) | 전체 |
+
+#### 3.8 결정 필요 항목 (3-A 전에)
+
+1. **Slack 봇 승인/권한 범위**: user 가 봇을 설치할 워크스페이스 결정, scope 승인 준비
+2. **채널 전략**: `#task-T###-<slug>` 자동 생성 (`channels:manage`) vs 사전 생성된 단일 `#tasks` 채널 + 스레드로 분리
+3. **Coordinator 세션 수명**: Orca 자동 재시작 지원 여부 — 지금은 수동 유지 가정
+4. **kiro worker_done**: `tasks.sh advance` 가 `worker_done` 호출 시 `--outcome` 결정 로직 — kiro 작업 커밋 유무로 판정 vs 명시적 "pass/fail" 수동 입력
 
 ### Phase 4 (선택) — 관측 레이어
 
