@@ -10,6 +10,7 @@
 .harness/
 ├── README.md                 이 문서
 ├── WORKPLAN.md               전체 설계 + Phase 체크리스트
+├── AGENTS.md                 에이전트별 특성 + 역할별 추천 (Phase 2 관찰 기반)
 ├── board.md                  활성 task 집계 (수동 또는 tasks.sh list 참고)
 ├── roles/                    8개 역할 지침 (불변)
 ├── templates/                task / pause-note / compose override

@@ -63,13 +63,31 @@ worktree 내부에서 실행하면 task-id 자동 감지.
 EOF
 }
 
-# task-id (T001) 를 받아 task 파일 경로 반환
+# task-id → main 쪽 task.md 경로 (존재 확인용). advance/merge 는 live(worktree) 경로를 쓸 것.
 task_file() {
   local id="$1"
   local f
-  f=$(find "$TASKS_DIR" -maxdepth 1 -name "${id}-*.md" | head -1)
+  f=$(find "$MAIN_REPO_ROOT/.harness/tasks" -maxdepth 1 -name "${id}-*.md" | head -1)
   [[ -n "$f" ]] || die "task 파일을 찾을 수 없음: $id"
   echo "$f"
+}
+
+# task-id → worktree 의 live task.md 경로 (각 역할이 섹션 작성, advance 가 조작)
+live_task_file() {
+  local id="$1"
+  local main_f
+  main_f=$(task_file "$id")
+  local slug
+  slug="$(basename "$main_f" .md)"          # T001-signup-api
+  slug="${slug#*-}"                           # signup-api
+  local wt="$WORKTREES_DIR/${id}-${slug}"
+  local live="$wt/.harness/tasks/${id}-${slug}.md"
+  if [[ -f "$live" ]]; then
+    echo "$live"
+  else
+    # worktree 가 없거나 merge 완료된 상태면 main 폴백
+    echo "$main_f"
+  fi
 }
 
 # 현재 디렉토리가 worktree 안이면 task-id 추출, 아니면 빈 문자열
@@ -299,8 +317,12 @@ cmd_advance() {
   done
   local id
   id="$(resolve_task_id "$given_id")"
+  # advance 는 live(worktree) task.md 를 조작 — main 에서 호출돼도 올바르게 동작
   local f
-  f="$(task_file "$id")"
+  f="$(live_task_file "$id")"
+  if [[ "$f" == "$(task_file "$id")" ]]; then
+    die "worktree 의 live task.md 를 찾지 못함: $id. worktree 가 cleanup 됐거나 (merge/drop 후) 생성 전 상태일 수 있음."
+  fi
 
   local current
   current="$(get_fm "$f" "current_role")"
@@ -425,14 +447,24 @@ cmd_merge() {
 
   # worktree + 브랜치 정리
   if [[ -d "$wt_abs" ]]; then
-    git worktree remove --force "$wt_abs"
+    git worktree remove --force "$wt_abs" 2>/dev/null || rm -rf "$wt_abs" 2>/dev/null || info "  ⚠ worktree 디렉토리 완전 삭제 실패 (수동 cleanup 필요)"
     info "  worktree removed"
   fi
   git branch -D "$branch" >/dev/null 2>&1 || true
   info "  branch deleted"
 
-  # handles 파일 정리
-  rm -f "$CHAT_DIR/${id}.handles"
+  # artifacts → archive (chat log, handles, task.md 는 git tracked 라 커밋만 함)
+  mkdir -p "$ARCHIVE_DIR"
+  [[ -f "$CHAT_DIR/${id}.jsonl" ]] && mv "$CHAT_DIR/${id}.jsonl" "$ARCHIVE_DIR/" && info "  chat.jsonl → archive"
+  [[ -f "$CHAT_DIR/${id}.handles" ]] && mv "$CHAT_DIR/${id}.handles" "$ARCHIVE_DIR/" && info "  handles → archive"
+  # main의 task.md 는 history 보존을 위해 archive 로 이동(git mv)
+  if [[ -f "$f" ]]; then
+    local f_name
+    f_name="$(basename "$f")"
+    git mv "$f" ".harness/archive/$f_name" 2>/dev/null || mv "$f" "$ARCHIVE_DIR/"
+    git -c core.hooksPath=/dev/null commit -m "${id} [harness]: archive task.md after merge" >/dev/null 2>&1 || true
+    info "  task.md → archive"
+  fi
 
   info "완료: $id merged."
 }
