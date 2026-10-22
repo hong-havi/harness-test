@@ -12,7 +12,7 @@ required_roles:
   - { role: frontend,   agent: claude }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: claude }
-current_role: planner
+current_role: backend
 role_history: []
 ports:
   web: 3030
@@ -136,24 +136,67 @@ updated_at: 2026-10-22
 ---
 
 ## Implementation (Backend)
-<backend 작성>
+
+### 설계 메모 (architect 섹션 생략에 대비한 코드 레벨 결정)
+- 엔드포인트: `POST /auth/join`, 입력 `{ userId, password }` (프로젝트 전역 camelCase 규약 유지 — 기존 `/auth/signup` 과 일치), 응답 `PublicMember` (`{ id, userId, nickname }`), 상태 201.
+- DB 스키마 변경 없음 (기존 `members` 테이블 재사용, 마이그레이션 없음).
+- 닉네임 자동 생성 알고리즘:
+  1. 1차 시도: `nickname = truncateNickname(userId)` (32자 초과 시 자름).
+  2. `uk_members_nickname` 충돌 시 `userId-xxxx` 형태 (4-hex 접미사, 길이 32 상한) 로 **최대 5회** 재시도.
+  3. 모두 실패 시 500 대신 409 `ConflictException` 응답.
+  4. `uk_members_user_id` 중복이 save 단계에서 터지면(선검사와 race) 409 로 매핑.
+- 선검사 (`membersRepo.exists`) 는 user_id 중복만 수행 — nickname 은 DB `UNIQUE` + 루프 재시도에 위임해 race 창을 최소화.
 
 ### 변경 파일
-- `apps/api/.../...` — 설명
+- `apps/api/src/auth/dto/join.dto.ts` — 신규 DTO (userId + password, class-validator 적용).
+- `apps/api/src/auth/auth.service.ts` — `join()` 메서드 + nickname 자동 생성 헬퍼 추가.
+- `apps/api/src/auth/auth.controller.ts` — `POST /auth/join` 핸들러 추가.
+- `apps/api/src/auth/auth.service.spec.ts` — join 시나리오 6개 단위 테스트 추가.
 
 ### 새 환경변수
-- `VAR_NAME` — 용도
+- 없음.
 
 ### 마이그레이션
-- 파일명: ...
+- 없음 (DB 스키마 변경 없음).
+
+### API 계약 (frontend 참고용)
+| Method | Path | Auth | 요청 | 응답 바디 | 상태 코드 |
+|--------|------|------|------|-----------|-----------|
+| POST | `/auth/join` | 없음 | `{ userId: string, password: string }` | `{ id, userId, nickname }` | 201 성공 · 400 검증실패 · 409 중복/닉네임생성실패 |
+
+- 쿠키 발급 없음 (가입 후 자동 로그인 안 함 — F-M1 정책).
+- Validation 규칙은 `/auth/signup` 과 동일: `userId` = `^[A-Za-z0-9]{4,32}$`, `password` = 영문+숫자 조합 8~72자.
 
 ### 로컬 재현
 ```bash
-# 명령
+# worktree 포트: web=3030 / api=4030 / db=3309
+docker compose -p harness_t003 up -d db
+pnpm install
+pnpm --filter api migration:run
+pnpm --filter api test
+
+# 수동 재현
+pnpm --filter api start:dev   # 4030 포트
+curl -i -X POST http://localhost:4030/auth/join \
+  -H 'Content-Type: application/json' \
+  -d '{"userId":"joiner01","password":"Abcd1234"}'
+# → 201, body { id, userId:"joiner01", nickname:"joiner01" }
+
+curl -i -X POST http://localhost:4030/auth/join \
+  -H 'Content-Type: application/json' \
+  -d '{"userId":"joiner01","password":"Abcd1234"}'
+# → 409 (중복)
 ```
 
 ### 수용 기준 자가 검증
-- [x] ...
+- [x] `POST /auth/join` 201 응답, members 레코드 생성, nickname/created_ip NOT NULL, password_hash 는 bcrypt `$2…` 포맷 (unit test `creates member with nickname = userId on first attempt`).
+- [x] 동일 user_id 재가입 시 409 (unit test `throws 409 when user_id already exists (pre-check)` + race 케이스 `maps race-condition user_id duplicate to 409`).
+- [x] userId/password 유효성 위반 시 400 — `JoinDto` 가 `/auth/signup` 과 동일 class-validator 규칙 사용 (전역 `ValidationPipe` 적용).
+- [x] nickname UNIQUE 충돌 시 자동 재시도 + 최종 실패 시 409 (unit tests `retries with suffix on nickname collision then succeeds`, `throws 409 when nickname cannot be generated after max attempts`).
+- [x] nickname 32자 상한 유지 (unit test `truncates long userId to fit 32-char nickname limit`).
+- [x] `/signup` 및 `POST /auth/signup` 코드 미변경 → 회귀 없음 (기존 23개 테스트 전부 통과).
+- [x] 자동 로그인 안 함 — 쿠키 미설정, 응답은 PublicMember 만 (`AuthController.join` 참조).
+- [ ] 가입 후 `/login?joined=1` 리다이렉트 및 전체 Web+API docker-compose 흐름 — frontend 작업 완료 후 QA 가 통합 확인.
 
 ---
 
