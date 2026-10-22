@@ -170,13 +170,62 @@ $out
 }
 
 # ─────────────────────────────────────────────────────────────────────
-# 1 iteration: Slack 폴링 + 명령 처리
+# task 의 활성(마지막) agent 터미널 handle 조회 — .harness/chat/<id>.handles 마지막 줄
+# ─────────────────────────────────────────────────────────────────────
+active_terminal_for_task() {
+  local id="$1"
+  local hf="$REPO_ROOT/.harness/chat/${id}.handles"
+  [[ -f "$hf" ]] || return 1
+  tail -1 "$hf" | awk -F'"handle":"' '{print $2}' | awk -F'"' '{print $1}'
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# 활성 task 들의 Slack 스레드 reply 를 폴링 → 해당 agent 터미널에 주입
+# ─────────────────────────────────────────────────────────────────────
+poll_task_threads() {
+  shopt -s nullglob
+  for slack_file in "$REPO_ROOT"/.harness/chat/T[0-9][0-9][0-9].slack; do
+    local id thread_ts cursor_file cursor
+    id="$(basename "$slack_file" .slack)"
+    thread_ts="$(cat "$slack_file")"
+    cursor_file="$COORD_DIR/thread-cursor-${id}.txt"
+    cursor="$thread_ts"
+    [[ -f "$cursor_file" ]] && cursor="$(cat "$cursor_file")"
+
+    local last_processed="$cursor"
+    while IFS=$'\t' read -r ts user text; do
+      [[ -z "$ts" ]] && continue
+      info "[$id] user reply @ $ts: $(echo "$text" | cut -c1-80)"
+      # 1) chat log 에 answer 로 기록
+      "$SCRIPT_DIR/chat.sh" append "$id" user "coord" answer "$text" >/dev/null 2>&1 || true
+      # 2) 현재 활성 agent 터미널에 주입
+      local handle
+      if handle="$(active_terminal_for_task "$id")" && [[ -n "$handle" ]]; then
+        info "[$id] → agent 터미널 ($handle) 에 주입"
+        orca terminal send --terminal "$handle" --text "$text" --enter --json >/dev/null 2>&1 \
+          || info "[$id] ⚠ terminal send 실패 (handle 만료 가능)"
+      else
+        info "[$id] ⚠ 활성 터미널 없음 — chat log 에만 기록"
+      fi
+      log_decision "thread_reply_relayed" "$id ts=$ts user=$user"
+      last_processed="$ts"
+    done < <("$SCRIPT_DIR/slack/thread-replies.sh" --thread "$thread_ts" --oldest "$cursor" --limit 20)
+
+    if [[ "$last_processed" != "$cursor" ]]; then
+      echo "$last_processed" > "$cursor_file"
+    fi
+  done
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# 1 iteration: top-level 명령 + 스레드 reply 모두 처리
 # ─────────────────────────────────────────────────────────────────────
 run_once() {
   local cursor
   cursor="$(state_get slack_cursor)"
   [[ -z "$cursor" || "$cursor" == "None" ]] && cursor="0"
 
+  # 1) 채널 top-level 메시지 (봇 명령)
   local last_ts="$cursor"
   while IFS=$'\t' read -r ts user text; do
     [[ -z "$ts" ]] && continue
@@ -188,6 +237,9 @@ run_once() {
   if [[ "$last_ts" != "$cursor" ]]; then
     state_set_cursor "$last_ts"
   fi
+
+  # 2) 활성 task 들의 스레드 reply → agent 로 전달
+  poll_task_threads
 }
 
 cmd_start() {

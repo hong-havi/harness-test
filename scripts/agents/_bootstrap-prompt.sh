@@ -54,6 +54,25 @@ cat <<EOF
 ## 반드시 지킬 것
 
 - \`tasks.sh advance\` 를 **플래그 없이** 호출하세요. \`--no-spawn\` 은 사람 디버깅용이며 agent가 쓰면 역할 체인이 끊어집니다.
+- qa/reviewer 역할은 \`advance\` 시 \`--outcome succeeded\` 또는 \`--outcome failed\` 필수.
 - 작업 결과물을 반드시 커밋한 뒤 \`advance\` 하세요. uncommitted 상태에서 advance 하면 다음 역할이 변경을 못 봅니다.
 - 세션 자체 종료는 agent CLI 가 자동으로 처리. shell 을 수동으로 \`exit\` 할 필요 없음.
+
+## 사용자에게 질문해야 할 때 (중요)
+
+PRD 모호, 결정 필요, 추가 데이터 요청 등 user 답이 필요한 경우:
+
+1. **질문을 chat log 에 \`question\` 타입으로 append**:
+   \`\`\`
+   ./scripts/chat.sh append ${TASK_ID} ${ROLE} user question "<구체적인 질문 1개>"
+   \`\`\`
+   이 메시지는 자동으로 Slack 스레드에 미러됩니다.
+
+2. **답을 기다립니다**. 사용자가 Slack 스레드에 reply 하면 Coordinator 가 당신의 터미널에 자동 주입합니다 (일반 입력처럼 받음).
+
+3. 질문 하나당 user 답변 하나 — 여러 질문은 분리해서 보내거나 하나로 묶어 보내세요.
+
+4. 답을 받기 전까지는 진행하지 말고 대기. 터미널 응답 대기 상태를 유지하세요.
+
+지침 외 결정을 임의로 하지 말고, 모호함은 반드시 질문으로 해소.
 EOF
