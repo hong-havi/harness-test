@@ -279,15 +279,43 @@ run_once() {
 }
 
 cmd_start() {
+  # PID lock — 중복 실행 방지 (여러 coord 가 돌면 Slack 응답 중복됨)
+  local lockfile="$COORD_DIR/coord.pid"
+  if [[ -f "$lockfile" ]]; then
+    local old_pid
+    old_pid="$(cat "$lockfile" 2>/dev/null || echo 0)"
+    if [[ -n "$old_pid" && "$old_pid" -gt 0 ]] && kill -0 "$old_pid" 2>/dev/null; then
+      die "coord 이미 실행 중 (PID $old_pid). 'kill $old_pid' 로 종료 후 재시작하거나, coord.sh stop 사용."
+    fi
+    info "stale lock 발견 (PID $old_pid 안 돌음) → 제거"
+    rm -f "$lockfile"
+  fi
+  echo "$$" > "$lockfile"
+  trap 'rm -f "$lockfile"; exit 0' INT TERM EXIT
+
   state_init
-  info "listen 루프 시작 (interval=${POLL_INTERVAL}s). Ctrl+C 로 종료."
-  reply "🤖 coordinator 세션 시작/재시작됨 — \`help\` 로 명령 확인"
-  log_decision "coord_started" ""
+  info "listen 루프 시작 (PID $$, interval=${POLL_INTERVAL}s). Ctrl+C 로 종료."
+  reply "🤖 coordinator 세션 시작 (PID $$) — \`help\` 로 명령 확인"
+  log_decision "coord_started" "pid=$$"
 
   while true; do
     run_once || info "⚠ iteration 실패 (계속)"
     sleep "$POLL_INTERVAL"
   done
+}
+
+cmd_stop() {
+  local lockfile="$COORD_DIR/coord.pid"
+  [[ -f "$lockfile" ]] || { echo "실행 중인 coord 없음 (lock 파일 없음)"; return; }
+  local pid
+  pid="$(cat "$lockfile")"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" && echo "coord PID $pid 종료 요청"
+    sleep 1
+  else
+    echo "lock 파일의 PID $pid 가 안 돌고 있음 (stale)"
+  fi
+  rm -f "$lockfile"
 }
 
 cmd_step() {
@@ -312,14 +340,20 @@ sub="${1:-}"
 shift || true
 case "$sub" in
   start)  cmd_start ;;
+  stop)   cmd_stop ;;
   step)   cmd_step ;;
   status) cmd_status ;;
   ""|-h|--help|help)
     cat <<EOF
-Usage: $0 <start|step|status>
+Usage: $0 <start|stop|step|status>
 
-Slack 봇 멘션으로 명령 전송 — @harnessbot <command>
-명령: new <slug>, advance <task-id> [succeeded|failed], status, help
+start   메인 루프 (foreground). PID lock 으로 중복 실행 방지.
+stop    실행 중인 coord 종료 (lock 파일의 PID kill)
+step    1회 iteration (디버깅)
+status  state.json + decisions.jsonl 요약
+
+Slack 봇 멘션으로 명령 전송 — @harness-bot <command>
+명령: new <slug>, advance <task-id> [succeeded|failed], rework <task-id> <role>, status, help
 EOF
     ;;
   *) echo "Unknown: $sub" >&2; exit 1 ;;
