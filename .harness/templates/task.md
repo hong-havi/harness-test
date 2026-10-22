@@ -6,13 +6,13 @@ branch: task/T###-<slug>
 worktree: .worktrees/T###-<slug>
 status: planning          # planning | in-flight | paused | merged | dropped
 required_roles:
-  - { role: planner,    agent: claude }
-  - { role: architect,  agent: claude }
-  # - { role: designer,   agent: claude, mcp: [figma] }
-  - { role: backend,    agent: claude }
-  # - { role: frontend,   agent: claude }
-  - { role: qa,         agent: claude }
-  - { role: reviewer,   agent: claude }
+  - { role: planner,    agent: <AGENT> }
+  - { role: architect,  agent: <AGENT> }
+  # - { role: designer,   agent: <AGENT>, mcp: [figma] }
+  - { role: backend,    agent: <AGENT> }
+  # - { role: frontend,   agent: <AGENT> }
+  - { role: qa,         agent: <AGENT> }
+  - { role: reviewer,   agent: <AGENT> }
 current_role: planner
 role_history: []
 ports:

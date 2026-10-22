@@ -50,13 +50,14 @@ usage() {
 Usage: $0 <command> [args]
 
 Commands:
-  new <slug> [자연어 요구사항...] [--from <path>]
+  new <slug> [자연어 요구사항...] [--from <path>] [--agent <name>]
                                 Create task + worktree + branch (planner 자동 spawn).
                                 요구사항 전달 우선순위:
                                   --from <path>  명시 파일
                                   인라인 자연어   slug 뒤 토큰들
                                   자동 매칭      .harness/requests/<slug>.md 있으면 사용
-                                User Request 섹션으로 task.md + chat log 에 삽입.
+                                --agent: 모든 역할의 기본 agent (default: HARNESS_DEFAULT_AGENT
+                                         env 또는 claude). 지원: claude, codex, kiro.
   list                          Show active tasks
   advance [task-id] [--outcome succeeded|failed]
                                 Move current_role to next, auto-spawn 다음 agent.
@@ -202,10 +203,12 @@ cmd_new() {
   fi
   local description=""
   local from_file=""
+  local agent="${HARNESS_DEFAULT_AGENT:-claude}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-spawn) die "--no-spawn 플래그는 제거됨. 디버깅용으로 자동 spawn 끄려면 'HARNESS_NO_SPAWN=1 ./scripts/tasks.sh ...' 로 환경변수 사용." ;;
       --from) from_file="$2"; shift 2 ;;
+      --agent) agent="$2"; shift 2 ;;
       -*) die "Unknown flag: $1" ;;
       *)
         if [[ -z "$slug" ]]; then
@@ -219,6 +222,9 @@ cmd_new() {
   done
   [[ -n "$slug" ]] || die "slug 가 필요합니다. 예: $0 new signup-api [자연어 요구사항] 또는 --from <path>"
   [[ "$slug" =~ ^[a-z0-9-]+$ ]] || die "slug 는 kebab-case 소문자+숫자+하이픈만 허용"
+  # agent 유효성 — scripts/agents/<agent>.sh 어댑터 존재해야
+  [[ -x "$MAIN_REPO_ROOT/scripts/agents/${agent}.sh" ]] \
+    || die "지원하지 않는 agent: $agent. scripts/agents/ 에 어댑터 있어야 함 (claude/codex/kiro)"
 
   # description 결정: --from (명시) > 인라인 > .harness/requests/<slug>.md (자동 매칭)
   if [[ -n "$from_file" ]]; then
@@ -268,13 +274,14 @@ cmd_new() {
     -e "s|<kebab-slug>|${slug}|g" \
     -e "s|<slug>|${slug}|g" \
     -e "s|<한 줄 요약>|${slug}|g" \
+    -e "s|<AGENT>|${agent}|g" \
     -e "s|web: 3010|web: ${web_port}|" \
     -e "s|api: 4010|api: ${api_port}|" \
     -e "s|db: 3307|db: ${db_port}|" \
     -e "s|compose_project: harness_t###|compose_project: ${compose_proj}|" \
     -e "s|YYYY-MM-DD|${today}|g" \
     "$TEMPLATE_TASK" > "$task_abs"
-  info "  → task.md 생성"
+  info "  → task.md 생성 (agent: ${agent})"
 
   # 3) task.md 를 worktree 쪽에도 복사해 두되 — 실제로는 main에서 git add 후
   #    worktree 가 보도록 커밋 전까지는 각자 영역. 간단히 main 쪽에만 두고
