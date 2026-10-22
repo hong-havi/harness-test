@@ -13,7 +13,7 @@ required_roles:
   # - { role: frontend,   agent: claude }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: claude }
-current_role: backend
+current_role: qa
 role_history: []
 ports:
   web: 3090
@@ -415,24 +415,56 @@ curl -X POST http://localhost:4090/auth/signup \
 ---
 
 ## QA report
-<qa 작성>
 
 ### 결과
-- 결정: pass | fail
+- 결정: pass
 - 일자: 2026-10-22
-- 환경: WEB=:<port>/API=:<port>/DB=:<port>
+- 환경: WEB=:3090 (docker, 참고 기동만) / API=:4090 (docker compose) / DB=:3315 (docker mysql:8)
+
+### 검증 방법
+- 유닛/빌드: `pnpm --filter api typecheck` clean, `pnpm --filter api test` **32/32 pass**.
+- 마이그레이션 왕복: host 에서 `DB_HOST=127.0.0.1 DB_PORT=3315 ... pnpm --filter api migration:run → :revert → :run` 모두 성공. `SHOW COLUMNS FROM members` 로 `email VARCHAR(254) NULL` 추가 / revert 시 제거 확인. `SHOW INDEX FROM members` 로 email UNIQUE 인덱스 없음 확인.
+- API live: `docker compose up -d db api` 로 4090 기동 후 curl 로 signup / login / GET·PATCH `/members/me` 검증. CSRF 는 로그인 응답 쿠키 `csrf_token` → `x-csrf-token` 헤더 재전송 패턴 사용.
+- UI 수용 기준 (`/signup`, `/me` email 입력란) 은 required_roles 에 frontend 미포함이라 **범위 밖** (T007 선례 동일). backend 범위 안에서 Acceptance 를 평가하고 frontend handoff 는 아래 노트에 명시.
 
 ### 수용 기준 검증
-- [x] <기준> — pass
-- [ ] <기준> — fail → 아래 참조
+
+DB / 마이그레이션
+- [x] `members.email VARCHAR(254) NULL` 존재, UNIQUE 인덱스 없음, migration:run → revert → run 왕복 모두 성공.
+
+POST /auth/signup
+- [x] email 생략 시 201 + 응답 바디 `{"id":"1","userId":"alice01","nickname":"alice"}`, DB `email=NULL`.
+- [x] 유효 email 포함 시 201 + 응답 바디 email 미노출(`PublicMember` 그대로), DB `email='bob@example.com'`.
+- [x] 포맷 오류 `"not-an-email"` → 400 `{"message":["email 형식이 올바르지 않습니다."],...}`.
+- [x] 254자 초과 (`a*245 + '@test.com'`, 254자 초과) → 400 (동일 메시지).
+- [x] 같은 email 로 서로 다른 user_id/nickname 두 번 가입 성공 (bob001 & bob002 모두 `bob@example.com`, 둘 다 201).
+
+GET /members/me
+- [x] 응답 바디에 `email` 필드 포함. 저장값 없는 alice → `"email":null`, 저장값 있는 bob → `"email":"bob@example.com"`.
+
+PATCH /members/me (CSRF 헤더 포함)
+- [x] email 신규 설정: `{"email":"bob-new@example.com"}` → 200, 응답/재조회 반영.
+- [x] email 변경: 설정값에서 다른 값으로 PATCH → 200.
+- [x] `{"email":null}` → 200, 응답 `"email":null` (삭제).
+- [x] `{"email":""}` → 200, 응답 `"email":null` (빈 문자열 → null 정규화 삭제).
+- [x] email-only PATCH (`{"email":"only@email.com"}`) → 200, "수정할 항목 없음" 400 아님.
+- [x] 전체 필드 미전송 (`{}`) → 400 `수정할 항목이 없습니다.` (회귀 유지).
+
+UI (`/signup`, `/me`) — **범위 밖 (frontend role 미포함)**
+- [-] `/signup` "이메일 (선택)" input — N/A (apps/web 변경 없음, grep "email" apps/web → 0건).
+- [-] `/me` email 프리필 + 수정 — N/A (동일).
+
+회귀
+- [x] 기존 signup/login/GET me 흐름 정상 (alice 로그인 → `/members/me` 200).
+- [-] 게시판 플로우 회귀: `/posts` 컨트롤러 미존재(아직 추가 전) → 해당 영역 회귀 대상 없음.
+- [x] HttpOnly 쿠키: `access_token` 은 `HttpOnly`, `csrf_token` 은 non-HttpOnly 로 분리 — 변경 없음.
 
 ### 발견 사항
-- 없음 또는
-- **[FAIL]** <요약>
-  - 재현:
-    1. ...
-  - 기대: ...
-  - 실제: ...
+- 없음 (backend 범위).
+- **참고 (frontend 핸드오프)**: Plan Acceptance 중 `/signup`, `/me` UI 2 항목은 Backend Implementation 섹션 "Frontend 핸드오프 (중요)" 에 명시된 대로 **required_roles 에 frontend 미할당 → 미구현** 상태. coordinator/user 가 (a) frontend 역할 추가 재분배, 또는 (b) 별도 task 분리 중 선택 필요. QA 는 backend 범위에서 pass 로 결론 (T007 선례와 동일 처리).
+
+### 환경 메모
+- `.env` 가 task-scoped 변수만 포함해 docker compose 가 빈 값으로 db 를 띄우던 문제를 재현 중 발견 → 로컬에서 `.env` 에 `.env.example` 값들(JWT_SECRET, DB_USER/PASSWORD/NAME, MYSQL_ROOT_PASSWORD, NODE_ENV 등) 을 **임시로** 병합해 기동. task 머지 전에는 커밋 금지(시크릿). 하네스 레벨에서 `.env.example` 머지 or docker-compose default 를 보강할지 reviewer/coordinator 판단 사항.
 
 ---
 
