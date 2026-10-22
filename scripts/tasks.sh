@@ -50,7 +50,9 @@ usage() {
 Usage: $0 <command> [args]
 
 Commands:
-  new <slug> [--no-spawn]       Create task + worktree + branch (planner 자동 spawn)
+  new <slug> [자연어 요구사항...] [--no-spawn]
+                                Create task + worktree + branch (planner 자동 spawn).
+                                slug 뒤 토큰들은 User Request 로 task.md + Slack 에 전달.
   list                          Show active tasks
   advance [task-id] [--no-spawn] [--outcome succeeded|failed]
                                 Move current_role to next, auto-spawn 다음 agent.
@@ -187,14 +189,23 @@ get_fm() {
 cmd_new() {
   local slug=""
   local no_spawn=0
+  local description=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-spawn) no_spawn=1; shift ;;
       -*) die "Unknown flag: $1" ;;
-      *) slug="$1"; shift ;;
+      *)
+        if [[ -z "$slug" ]]; then
+          slug="$1"; shift
+        else
+          # slug 뒤의 모든 토큰은 description 으로 결합
+          description="$*"
+          break
+        fi
+        ;;
     esac
   done
-  [[ -n "$slug" ]] || die "slug 가 필요합니다. 예: $0 new signup-api"
+  [[ -n "$slug" ]] || die "slug 가 필요합니다. 예: $0 new signup-api [자연어 요구사항]"
   [[ "$slug" =~ ^[a-z0-9-]+$ ]] || die "slug 는 kebab-case 소문자+숫자+하이픈만 허용"
 
   local id
@@ -265,9 +276,34 @@ cmd_new() {
     > "$wt_abs/docker-compose.override.yml"
   info "  → docker-compose.override.yml 생성"
 
-  # 5) chat 로그 초기화
+  # 5) description 이 주어지면 task.md 에 "## User Request" 섹션 삽입 (frontmatter 바로 뒤)
+  if [[ -n "$description" ]]; then
+    local tmpf="${task_abs}.tmp"
+    awk -v req="$description" -v tid="$id" '
+      BEGIN { fm=0; done=0 }
+      /^---$/ { fm++; print; if (fm==2 && !done) {
+        print ""
+        print "## User Request"
+        print ""
+        print "> " req
+        print ""
+        print "(" tid " 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을 기준으로 Plan 섹션을 작성한다.)"
+        print ""
+        done=1
+      }; next }
+      { print }
+    ' "$task_abs" > "$tmpf" && mv "$tmpf" "$task_abs"
+    git add "$task_rel"
+    git -c core.hooksPath=/dev/null commit --amend --no-edit >/dev/null 2>&1 || true
+    info "  → task.md 에 User Request 섹션 추가"
+  fi
+
+  # 6) chat 로그 초기화 + user request 를 즉시 append (Slack 스레드 첫 메시지가 됨)
   mkdir -p "$CHAT_DIR"
   "$SCRIPT_DIR/chat.sh" append "$id" harness tasks note "task $id ($slug) created" >/dev/null
+  if [[ -n "$description" ]]; then
+    "$SCRIPT_DIR/chat.sh" append "$id" user coordinator request "$description" >/dev/null
+  fi
 
   info ""
   if [[ $no_spawn -eq 1 ]]; then

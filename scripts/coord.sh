@@ -107,7 +107,7 @@ handle_command() {
       ;;
     "help")
       reply "📘 *하네스 Coordinator 명령*
-\`new <slug>\` — 새 task 생성 (planner 자동 spawn)
+\`new <slug> [자연어 설명...]\` — 새 task 생성. 설명은 planner 에게 User Request 로 전달
 \`advance <task-id>\` — 다음 역할로 (커밋 유무로 추론)
 \`advance <task-id> succeeded|failed\` — qa/reviewer outcome 명시
 \`rework <task-id> <role>\` — 지정 역할로 되돌리고 재 spawn (fail 복구용)
@@ -140,16 +140,25 @@ $out
 \`\`\`"
       ;;
     "new "*)
-      local slug="${cmd#new }"
-      slug="$(echo "$slug" | awk '{print $1}')"
-      [[ -n "$slug" ]] || { reply "⚠ slug 없음. 예: \`new signup-api\`"; return; }
+      local rest="${cmd#new }"
+      local slug description
+      slug="$(echo "$rest" | awk '{print $1}')"
+      # slug 뒤 모든 토큰 = description (자연어)
+      description="$(echo "$rest" | awk '{for(i=2;i<=NF;i++) printf "%s%s", (i>2?" ":""), $i; print ""}')"
+      [[ -n "$slug" ]] || { reply "⚠ slug 없음. 예: \`new remember-me 로그인에 remember me 체크박스 추가\`"; return; }
       local out
-      if out="$("$SCRIPT_DIR/tasks.sh" new "$slug" 2>&1)"; then
-        reply "✅ *task 생성 완료* (\`$slug\`)
+      if [[ -n "$description" ]]; then
+        out="$("$SCRIPT_DIR/tasks.sh" new "$slug" "$description" 2>&1)" && ok=1 || ok=0
+      else
+        out="$("$SCRIPT_DIR/tasks.sh" new "$slug" 2>&1)" && ok=1 || ok=0
+      fi
+      if [[ $ok -eq 1 ]]; then
+        reply "✅ *task 생성 완료* (\`$slug\`)${description:+
+> $description}
 \`\`\`
-$(echo "$out" | tail -15)
+$(echo "$out" | tail -12)
 \`\`\`"
-        log_decision "task_created" "$slug"
+        log_decision "task_created" "$slug${description:+ — $description}"
       else
         reply "❌ task 생성 실패:
 \`\`\`
