@@ -193,6 +193,13 @@ get_fm() {
 cmd_new() {
   local slug=""
   local no_spawn="${HARNESS_NO_SPAWN:-0}"
+  if [[ "$no_spawn" == "1" ]]; then
+    # 사람 interactive TTY 전용 — agent 세션(orca-spawned PTY, non-interactive shell)에서는 거부
+    if [[ ! -t 0 || "${ORCA_AGENT_SESSION:-}" == "1" ]]; then
+      die "HARNESS_NO_SPAWN=1 은 사람 interactive TTY 전용. agent 세션에선 금지됨. (자동 spawn 끄지 말고 그대로 체인 유지)"
+    fi
+    info "⚠ HARNESS_NO_SPAWN=1: 자동 spawn 생략 (디버깅 모드)"
+  fi
   local description=""
   local from_file=""
   while [[ $# -gt 0 ]]; do
@@ -394,6 +401,13 @@ cmd_list() {
 cmd_advance() {
   local given_id=""
   local no_spawn="${HARNESS_NO_SPAWN:-0}"
+  if [[ "$no_spawn" == "1" ]]; then
+    # 사람 interactive TTY 전용 — agent 세션(orca-spawned PTY, non-interactive shell)에서는 거부
+    if [[ ! -t 0 || "${ORCA_AGENT_SESSION:-}" == "1" ]]; then
+      die "HARNESS_NO_SPAWN=1 은 사람 interactive TTY 전용. agent 세션에선 금지됨. (자동 spawn 끄지 말고 그대로 체인 유지)"
+    fi
+    info "⚠ HARNESS_NO_SPAWN=1: 자동 spawn 생략 (디버깅 모드)"
+  fi
   local outcome=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -551,6 +565,13 @@ cmd_spawn() {
 cmd_rework() {
   local given_id="" to_role=""
   local no_spawn="${HARNESS_NO_SPAWN:-0}"
+  if [[ "$no_spawn" == "1" ]]; then
+    # 사람 interactive TTY 전용 — agent 세션(orca-spawned PTY, non-interactive shell)에서는 거부
+    if [[ ! -t 0 || "${ORCA_AGENT_SESSION:-}" == "1" ]]; then
+      die "HARNESS_NO_SPAWN=1 은 사람 interactive TTY 전용. agent 세션에선 금지됨. (자동 spawn 끄지 말고 그대로 체인 유지)"
+    fi
+    info "⚠ HARNESS_NO_SPAWN=1: 자동 spawn 생략 (디버깅 모드)"
+  fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-spawn) die "--no-spawn 플래그는 제거됨. 디버깅용으로 자동 spawn 끄려면 'HARNESS_NO_SPAWN=1 ./scripts/tasks.sh ...' 로 환경변수 사용." ;;

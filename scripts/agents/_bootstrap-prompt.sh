@@ -95,7 +95,10 @@ cat <<EOF
 
 ## 반드시 지킬 것
 
-- \`tasks.sh advance\` 를 **그대로** 호출하세요 (--no-spawn 같은 플래그 금지 — 거부됨).
+- \`tasks.sh advance\` 를 **그대로** 호출하세요. 자동 spawn 끄기 금지:
+  - \`--no-spawn\` 플래그 → 제거됨
+  - \`HARNESS_NO_SPAWN=1\` 환경변수 → agent 세션은 거부됨
+  - 다음 역할 수동 spawn 유도 금지 (사용자에게 "./scripts/tasks.sh spawn 하세요" 라고 지시 X)
 - qa/reviewer 역할은 \`advance\` 시 \`--outcome succeeded\` 또는 \`--outcome failed\` 필수.
 - 작업 결과물을 반드시 커밋한 뒤 \`advance\` 하세요. uncommitted 상태에서 advance 하면 다음 역할이 변경을 못 봅니다.
 - 세션 자체 종료는 agent CLI 가 자동으로 처리. shell 을 수동으로 \`exit\` 할 필요 없음.
