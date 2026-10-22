@@ -4,7 +4,7 @@ title: remember-me
 slug: remember-me
 branch: task/T007-remember-me
 worktree: .worktrees/T007-remember-me
-status: planning          # planning | in-flight | paused | merged | dropped
+status: merged
 required_roles:
   - { role: planner,    agent: claude }
   - { role: architect,  agent: claude }
