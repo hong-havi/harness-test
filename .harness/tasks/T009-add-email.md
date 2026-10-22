@@ -13,7 +13,7 @@ required_roles:
   # - { role: frontend,   agent: claude }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: claude }
-current_role: qa
+current_role: reviewer
 role_history: []
 ports:
   web: 3090
@@ -469,25 +469,32 @@ UI (`/signup`, `/me`) — **범위 밖 (frontend role 미포함)**
 ---
 
 ## Review notes
-<reviewer 작성>
 
 ### 결과
-- 결정: pass | rework
+- 결정: pass (approve for merge — 사용자 배포 승인 대기)
 - 일자: 2026-10-22
-- 병합 SHA: <sha> (pass 시)
+- 병합 SHA: — (user 승인 후 `./scripts/tasks.sh merge T009`)
+- verdict: approve
+
+### 리뷰 대상
+- 커밋 6개 (`main..HEAD`): planner Plan → migration → signup → me → impl 섹션 → QA pass
+- 코드 diff: apps/api/ 8 파일 (+452/-32 로직), .harness/tasks/T009-add-email.md 문서. apps/web/ 변경 없음 (role 경계 준수).
+- `pnpm --filter api test` 로컬 재실행 — 32/32 pass.
 
 ### Blocker
-- 없음 또는
-- `file.ts:42` — <문제>, <수정 가이드>
+- 없음.
 
-### Suggest
-- `file.ts:88` — <개선 아이디어>
+### Suggest (비차단)
+- [권고] `apps/api/src/auth/dto/signup.dto.ts:30-33` — `@IsEmail` 데코레이터가 `@MaxLength(254)` 뒤에 오는 순서. class-validator 는 모두 평가하므로 동작은 OK 지만, class-validator 관례상 포맷 → 길이 순서(또는 반대)로 통일하면 가독성 ↑. 수정 1-2줄, 선택.
+- [권고] `apps/api/src/members/members.service.ts:75` — `patch.email = dto.email ?? null` 로 할당. `hasEmail` 체크를 이미 통과했으므로 `dto.email` 은 `string | null` 보장 (undefined 아님). `dto.email ?? null` 그대로 둬도 안전하지만 `patch.email = dto.email as string | null` 또는 그냥 `patch.email = dto.email` 로도 충분. 가독성 선택.
+- [권고] frontend 범위 (`/signup`, `/me` email input) 는 **required_roles 에 frontend 미포함** 이라 미구현. Plan Acceptance 중 UI 2 건은 미달성 상태. T007 선례대로 "범위 밖 → 별도 task 분리" 처리. coordinator 가 user 와 다음 task 생성 필요 (제목 안: "add-email-ui").
+- [권고] QA 수행 중 `.env` 에 로컬 시크릿을 임시 병합한 사항은 **커밋되지 않았음** 확인 (`git status` → 수정 파일 `.harness/tasks/T009-add-email.md` 1개뿐, `.env` 영역 untracked). 하네스 레벨에서 `.env.example` → `.env` 머지 또는 docker-compose default 보강은 별도 하네스 task 로 분리 권장.
 
 ### 체크리스트 요약
-- PRD 정합성: ✅
-- 보안: ✅
-- 리소스/누수: ✅
-- 성능/데이터: ✅
-- 코드 품질: ✅
-- 테스트: ✅
-- 범위: ✅
+- PRD 정합성: ✅ (PRD §3.1 members.email 추가 사유 Plan 명시, 수용 기준 백엔드 범위 전수 통과, UI 2건은 범위 분리 결정 명시)
+- 보안: ✅ (PII email 로그/에러 메시지 노출 없음 — 고정 메시지. PublicMember 응답에 email 미노출. JwtAuthGuard + CsrfGuard 유지. 비밀값·`.env` 커밋 없음)
+- 리소스/누수: ✅ (쿼리 패턴 변화 없음, 단일 UPDATE/INSERT)
+- 성능/데이터: ✅ (VARCHAR(254) RFC 5321, UNIQUE 없음 요구 일치, 마이그레이션 up/down 양방향 작성 + 왕복 QA 검증 성공, `synchronize: false` 유지)
+- 코드 품질: ✅ (DTO/서비스/엔티티 단일 책임, 명명 명확, 커밋 메시지 `T009 [claude]:` 접두어 준수)
+- 테스트: ✅ (signup 2건 + members 4건 추가, happy + 삭제/빈문자열/email-only patch 커버, 32/32 pass)
+- 범위: ✅ (apps/web 미변경, backend 범위 외 리팩터 없음)
