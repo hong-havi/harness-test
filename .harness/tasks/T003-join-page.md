@@ -4,7 +4,7 @@ title: /join 가입 페이지 (id+password 전용)
 slug: join-page
 branch: task/T003-join-page
 worktree: .worktrees/T003-join-page
-status: rework            # planning | in-flight | paused | merged | dropped | rework
+status: in-flight         # planning | in-flight | paused | merged | dropped | rework
 required_roles:
   - { role: planner,    agent: claude }
   - { role: architect,  agent: claude }
@@ -12,7 +12,7 @@ required_roles:
   - { role: frontend,   agent: claude }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: claude }
-current_role: qa
+current_role: reviewer
 role_history: []
 ports:
   web: 3030
