@@ -13,7 +13,7 @@ required_roles:
   # - { role: frontend,   agent: claude }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: claude }
-current_role: backend
+current_role: qa
 role_history: []
 ports:
   web: 3070
@@ -386,24 +386,48 @@ curl -i -X POST http://localhost:4070/auth/login \
 ---
 
 ## QA report
-<qa 작성>
 
 ### 결과
-- 결정: pass | fail
+- 결정: pass
 - 일자: 2026-10-22
-- 환경: WEB=:<port>/API=:<port>/DB=:<port>
+- 환경: WEB=:3070 (미기동 — 범위 밖) / API=:4070 (host, `node dist/main.js`) / DB=:3313 (docker mysql:8)
+
+### 검증 방법
+- 유닛/빌드: `pnpm --filter api test` (26 passed), `pnpm --filter api build` 성공.
+- API live: db 를 docker 로 올리고 host 포트 3313 바인딩 → `pnpm migration:run` 으로 members 테이블 생성 → `node dist/main.js` 로 API 를 4070 에 기동 → curl 로 Set-Cookie / 상태코드 / JWT 디코드 검증.
+  - 참고: `docker compose up api` 는 base `docker-compose.yml` 이 `4000:4000` 을 포함해 포트 충돌 (타 worktree) 로 실패. 로컬 node 로 우회해 포트 격리 (수용 기준에 영향 없음).
+- UI 수용 기준 (`/login` 체크박스 렌더/폼 payload) 은 required_roles 에 frontend 미포함이라 **범위 밖**.
 
 ### 수용 기준 검증
-- [x] <기준> — pass
-- [ ] <기준> — fail → 아래 참조
+UI (`/login`) — 범위 밖 (frontend role 미포함)
+- [-] `/login` 체크박스 렌더/초기 unchecked — N/A
+- [-] 체크박스가 `?signup=1`/`?joined=1`/에러 상태와 무관하게 노출 — N/A
+- [-] 로그인 submit payload 에 rememberMe 포함 — N/A
+
+API 쿠키 동작
+- [x] `POST /auth/login` body `rememberMe:true` → `Set-Cookie: access_token=...; Max-Age=604800; Path=/; HttpOnly; SameSite=Lax` + `csrf_token=...; Max-Age=604800; Path=/; SameSite=Lax` (둘 다 7일) — curl 로 raw 헤더 확인.
+- [x] `POST /auth/login` body `rememberMe:false` → 두 쿠키 모두 `Max-Age`/`Expires` 속성 **없음** (session cookie), 그러나 `Path=/`, `HttpOnly`(access_token), `SameSite=Lax` 는 유지. (단, 실제 응답에는 Express 가 `Expires` 를 Max-Age 로부터 유도하지 않을 때 생략 — 확인됨)
+- [x] 두 경우 모두 `HttpOnly` (access_token), `SameSite=Lax`, `Path=/` 유지.
+
+JWT 만료
+- [x] `rememberMe:true` → JWT payload `exp - iat === 604800` (디코드 확인: 1793250547 - 1792645747 = 604800).
+- [x] `rememberMe:false|undefined` → `exp - iat === 3600` (디코드 확인: 1792649348 - 1792645748 = 3600, `JWT_EXPIRES_IN=3600` env).
+
+DTO/검증
+- [x] `rememberMe: "yes"` → 400 Bad Request, 응답 바디 `{"message":["rememberMe must be a boolean value"],"error":"Bad Request","statusCode":400}`.
+- [x] `rememberMe` 미전송 → 200 OK + 세션 쿠키 경로 처리 (회귀 없음).
+
+회귀
+- [x] signup(qauser01) → login(rememberMe 미전송) → `GET /members/me` 200 OK + 바디 `{id,userId,nickname,createdAt,updatedAt}` 정상.
+- [x] rememberMe=true 로 로그인 후 `POST /auth/logout` → `Set-Cookie: access_token=; Max-Age=0; ...` + csrf_token 동일 — 즉시 만료 신호 유지 (설계 결정 §세션 쿠키 신호 반영 확인).
+- [x] 유닛 테스트 전수 (`AuthService.spec.ts` 포함 26 passed), rememberMe true/false/undefined 3 케이스 커버.
+- [x] 자격 불일치 → 401 `{"statusCode":401,"message":"아이디 또는 비밀번호가 일치하지 않습니다."}` 유지.
 
 ### 발견 사항
-- 없음 또는
-- **[FAIL]** <요약>
-  - 재현:
-    1. ...
-  - 기대: ...
-  - 실제: ...
+- 없음. 수용 기준 중 백엔드 범위 전부 pass. UI 수용 기준(체크박스 UI)은 required_roles 에 frontend 가 포함되지 않아 본 task 범위 밖으로 간주 (planner/architect 가 명시한 분기).
+
+### 참고 (리뷰어 전달용)
+- `/login` 체크박스 UI 는 별도 frontend task 또는 후속 라운드가 필요하다. 현재 `apps/web/app/login/page.tsx` 에는 rememberMe 체크박스가 없으므로, UI 수용 기준은 본 task 로는 전수 통과가 아님 — 다만 required_roles 기준으로는 완료.
 
 ---
 
