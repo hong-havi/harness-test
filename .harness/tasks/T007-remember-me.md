@@ -13,7 +13,7 @@ required_roles:
   # - { role: frontend,   agent: claude }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: claude }
-current_role: architect
+current_role: backend
 role_history: []
 ports:
   web: 3070
@@ -279,24 +279,92 @@ Frontend
 ---
 
 ## Implementation (Backend)
-<backend 작성>
+
+### 설계 메모
+- 엔드포인트: `POST /auth/login` — DTO 에 `rememberMe?: boolean` 추가. 응답 바디/다른 엔드포인트 계약 변경 없음.
+- 엔티티 변경: 없음. DB 스키마 변경 없음.
+- 마이그레이션: 없음.
+- 쿠키 세션 신호: `LoginResult.maxAgeSeconds: number | null` — `null` 이면 Express `res.cookie` 에 `maxAge` 키 자체를 넘기지 않음 → `Set-Cookie` 에 `Max-Age`/`Expires` 생략 (session cookie). `0` 은 로그아웃 전용 (즉시 만료).
 
 ### 변경 파일
-- `apps/api/.../...` — 설명
+- `apps/api/src/auth/dto/login.dto.ts` — `rememberMe?: boolean` + `@IsOptional() @IsBoolean()` 추가.
+- `apps/api/src/auth/auth.service.ts`
+  - `REMEMBER_ME_EXPIRES_SECONDS = 604800` 상수 추가.
+  - `LoginResult.maxAgeSeconds` 타입을 `number | null` 로 확장.
+  - `login()`: `dto.rememberMe === true` 분기로 JWT `expiresIn` 와 `maxAgeSeconds` 를 7일/`null` 로 결정. 그 외는 기존 동작 유지 (`JWT_EXPIRES_IN` env 기본 3600, `maxAgeSeconds=null` 세션 쿠키).
+- `apps/api/src/auth/auth.controller.ts`
+  - `cookieOptions(maxAgeMs: number | null)` 로 시그니처 확장. `null` 이면 `maxAge` 키 자체를 포함하지 않도록 변경. `0` 유지(logout 즉시 만료).
+  - `login()` 핸들러에서 `result.maxAgeSeconds === null ? null : * 1000` 로 변환해 두 쿠키에 동일하게 적용.
+  - `logout()` 변경 없음 (`cookieOptions(0)` 즉시 만료 유지).
+- `apps/api/src/auth/auth.service.spec.ts`
+  - 기존 happy path 를 `rememberMe` 미전송 → `maxAgeSeconds=null` 로 업데이트.
+  - rememberMe=true / rememberMe=false / rememberMe=undefined 3 케이스 추가 — `maxAgeSeconds` 와 `jwt.signAsync` 의 `expiresIn` 검증.
 
 ### 새 환경변수
-- `VAR_NAME` — 용도
+- 없음.
 
 ### 마이그레이션
-- 파일명: ...
+- 없음.
 
 ### 로컬 재현
 ```bash
-# 명령
+pnpm install
+pnpm --filter api build            # 타입체크 (nest build)
+pnpm --filter api test             # 전체 유닛 테스트 (26 passed)
+pnpm --filter api test --testPathPattern=auth   # auth 모듈만 (20 passed)
 ```
 
+Docker + curl 수동 검증 (QA 참고):
+```bash
+docker compose up -d db
+pnpm --filter api migration:run
+pnpm --filter api start:dev &
+
+# rememberMe=true → Max-Age=604800 쿠키 2개
+curl -i -X POST http://localhost:4070/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"userId":"alice01","password":"password12","rememberMe":true}'
+
+# rememberMe=false → session cookie (Max-Age 없음)
+curl -i -X POST http://localhost:4070/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"userId":"alice01","password":"password12","rememberMe":false}'
+
+# rememberMe 생략 → 세션 쿠키 (회귀)
+curl -i -X POST http://localhost:4070/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"userId":"alice01","password":"password12"}'
+
+# 비-boolean → 400
+curl -i -X POST http://localhost:4070/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"userId":"alice01","password":"password12","rememberMe":"yes"}'
+```
+
+### API 계약 (실제 응답)
+- 요청: `POST /auth/login` body `{ userId: string, password: string, rememberMe?: boolean }`
+- 성공 200: body `{ id, userId, nickname }` + 쿠키 2개
+  - `rememberMe:true` → `Set-Cookie: access_token=<jwt>; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800` + `csrf_token=<hex>; Path=/; SameSite=Lax; Max-Age=604800`
+  - `rememberMe:false` 또는 미전송 → 동일 쿠키이되 `Max-Age`/`Expires` 미설정 (session cookie)
+  - 운영 (`COOKIE_SECURE=true`) 에선 `Secure` 추가
+- 400 (DTO): `rememberMe` 가 boolean 이 아니면 `{ statusCode: 400, message: ["rememberMe must be a boolean value"], error: "Bad Request" }`
+- 401: `{ statusCode: 401, message: "아이디 또는 비밀번호가 일치하지 않습니다." }`
+- JWT payload: `rememberMe:true` → `exp - iat === 604800`, 그 외 → `JWT_EXPIRES_IN` env (기본 3600)
+
+### 범위 참고 (frontend 미포함)
+- `required_roles` 에 frontend 가 포함되어 있지 않아 본 세션에서는 `apps/web` 을 수정하지 않았다 (role 경계: backend 는 `apps/web/**` 수정 금지). UI 수용 기준(체크박스 렌더링·폼 payload) 은 별도 frontend task 또는 후속 QA 결정이 필요하다.
+
 ### 수용 기준 자가 검증
-- [x] ...
+- [x] API 쿠키: `rememberMe:true` → 두 쿠키 모두 `Max-Age=604800`, access_token `HttpOnly`, 둘 다 `SameSite=Lax; Path=/` (unit test + `cookieOptions` 로직 확인).
+- [x] API 쿠키: `rememberMe:false|undefined` → `Max-Age`/`Expires` 없음 (session cookie); `cookieOptions(null)` 이 `maxAge` 키 생략.
+- [x] JWT 만료: rememberMe=true → `expiresIn: 604800`, 미전송/false → `3600` (`JWT_EXPIRES_IN` env 기본).
+- [x] DTO 검증: `rememberMe` non-boolean → 400 (ValidationPipe `transform/whitelist/forbidNonWhitelisted` + `@IsBoolean()`).
+- [x] `rememberMe` 미전송 회귀: 200 OK + 세션 쿠키 경로 (유닛 테스트 "rememberMe=undefined").
+- [x] 로그아웃 회귀: `cookieOptions(0)` 유지 — Max-Age=0 즉시 만료 (설계 결정 반영, logout 핸들러 변경 없음).
+- [x] 유닛 테스트: `AuthService.spec.ts` 전부 통과 (login 5 케이스 포함, 전체 26 테스트 passed).
+- [x] 빌드/타입체크: `pnpm --filter api build` 성공.
+- [ ] UI (`/login` 체크박스 렌더링·폼 payload) — frontend 역할 미포함으로 본 세션 범위 외.
+- [ ] 로그인 후 `GET /members/me` 200 OK e2e — e2e 하네스 미구성 (QA 수동 확인 필요).
 
 ---
 
