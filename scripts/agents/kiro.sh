@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# agents/kiro.sh — Kiro CLI agent 를 Orca 터미널에서 안정적으로 spawn
+# agents/kiro.sh — Kiro agent 를 Orca native 로 spawn
 # 호출 규약: $0 <task-id> <role> <worktree-abs-path>
 #
-# 변경 이력:
-# - 초기: `orca terminal create --command "kiro-cli chat ... $(cat ...)"` →
-#   Windows cmd/PowerShell 쉘에서 $(cat) 치환 실패 → kiro-cli 가 literal
-#   받고 즉시 exit → cmd prompt 로 fallback 후 handle 캡처 실패.
-# - 현재: 임시 **bash wrapper 스크립트**를 생성해 그걸 bash.exe 절대경로로
-#   호출. spawn 후 tui-idle 체크로 kiro-cli 가 실제 떴는지 검증, 실패 시 1회 재시도.
+# Kiro 는 orca agent 로 등록되어 있어 'orca agent launch --agent kiro' 로
+# 네이티브 spawn 가능. 다만 --prompt 는 kiro-cli 가 initial prompt 로
+# 받지 않으므로(prompt.outcome=not-delivered), spawn 후 TUI 가 뜨면
+# 'orca terminal send' 로 프롬프트 주입.
 
 set -euo pipefail
 
@@ -18,10 +16,8 @@ WORKTREE_PATH="${3:?worktree path required}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_NAME="kiro"
 
-command -v kiro-cli >/dev/null 2>&1 || { echo "ERROR: kiro-cli 를 찾을 수 없음" >&2; exit 1; }
 command -v orca >/dev/null 2>&1 || { echo "ERROR: orca CLI 를 찾을 수 없음" >&2; exit 1; }
 
-# MAIN_REPO_ROOT 찾기 (handles 파일 공유 위치)
 GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir 2>/dev/null || echo "")"
 if [[ "$GIT_COMMON_DIR" = /* || "$GIT_COMMON_DIR" =~ ^[A-Z]:/ ]]; then
   MAIN_REPO_ROOT="$(dirname "$GIT_COMMON_DIR")"
@@ -29,74 +25,27 @@ else
   MAIN_REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 fi
 
-# bash.exe 절대경로 찾기 — orca terminal create 가 cmd/PowerShell 쉘에서 실행하므로
-# `bash` 만으론 WSL 로 갈 수 있어 Git Bash 절대경로를 사용.
-BASH_EXE=""
-for candidate in \
-  "C:/Program Files/Git/bin/bash.exe" \
-  "C:/Program Files (x86)/Git/bin/bash.exe"; do
-  [[ -x "$candidate" ]] && { BASH_EXE="$candidate"; break; }
-done
-if [[ -z "$BASH_EXE" ]]; then
-  # Git Bash 밖(Unix 등) — 평범한 bash 로 폴백
-  if command -v cygpath >/dev/null 2>&1; then
-    BASH_EXE="$(cygpath -m "$(which bash)")"
-  else
-    BASH_EXE="$(which bash)"
-  fi
-fi
-
-# WORKTREE_PATH 는 Orca 포맷(D:/...) 로 주어짐. bash 접근용 unix 경로로.
-if [[ "$WORKTREE_PATH" =~ ^[A-Z]:/ ]] && command -v cygpath >/dev/null 2>&1; then
-  WORKTREE_UNIX="$(cygpath -u "$WORKTREE_PATH")"
-else
-  WORKTREE_UNIX="$WORKTREE_PATH"
-fi
-
-# 프롬프트 + wrapper 스크립트 생성 (worktree 안)
 PROMPT="$("$SCRIPT_DIR/_bootstrap-prompt.sh" "$TASK_ID" "$ROLE" "$AGENT_NAME")"
-PROMPT_REL=".harness/.kiro-prompt-${TASK_ID}-${ROLE}.txt"
-RUN_REL=".harness/.kiro-run-${TASK_ID}-${ROLE}.sh"
-PROMPT_ABS="$WORKTREE_UNIX/$PROMPT_REL"
-RUN_ABS="$WORKTREE_UNIX/$RUN_REL"
 
-mkdir -p "$WORKTREE_UNIX/.harness"
-printf '%s\n' "$PROMPT" > "$PROMPT_ABS"
-
-# wrapper 스크립트: cd worktree + kiro-cli chat 실행
-cat > "$RUN_ABS" <<EOF
-#!/usr/bin/env bash
-set -e
-cd "\$(dirname "\$0")/../.."
-exec kiro-cli chat --trust-all-tools "\$(cat "$PROMPT_REL")"
-EOF
-chmod +x "$RUN_ABS"
-
-# cmd 쪽 명령: Git Bash 절대경로 + wrapper 스크립트 Windows 경로
-RUN_WIN="$RUN_ABS"
-if command -v cygpath >/dev/null 2>&1; then
-  RUN_WIN="$(cygpath -m "$RUN_ABS")"
-fi
-CMD="\"$BASH_EXE\" -lc \"'$RUN_WIN'\""
-
-echo "→ orca terminal create: kiro-cli chat @ $WORKTREE_PATH (role=$ROLE)"
+echo "→ orca agent launch: kiro @ $WORKTREE_PATH (role=$ROLE)"
 
 if [[ "${HARNESS_DRY_RUN:-0}" == "1" ]]; then
-  echo "[DRY RUN] orca terminal create --worktree path:$WORKTREE_PATH --command '$CMD'"
-  echo "[DRY RUN] wrapper: $RUN_ABS"
+  echo "[DRY RUN] orca agent launch --agent kiro --worktree path:$WORKTREE_PATH --focus --json"
+  echo "[DRY RUN] + orca terminal send --terminal <handle> --text <prompt>"
+  echo "[DRY RUN] prompt length: ${#PROMPT} chars"
   exit 0
 fi
 
-# spawn 시도 — 최대 2회 재시도 (사이 2초 대기, 각 시도 후 tui-idle 로 kiro 가 실제 떴는지 확인)
-spawn_attempt=0
+# spawn 재시도 (최대 2회): launch → tui-idle wait → prompt 주입
 HANDLE=""
-while [[ $spawn_attempt -lt 2 ]]; do
-  spawn_attempt=$((spawn_attempt+1))
-  echo "  attempt $spawn_attempt..."
-  RESPONSE="$(orca terminal create \
+attempt=0
+while [[ $attempt -lt 2 ]]; do
+  attempt=$((attempt+1))
+  echo "  attempt $attempt..."
+  RESPONSE="$(orca agent launch \
+    --agent kiro \
     --worktree "path:$WORKTREE_PATH" \
-    --title "Kiro ($ROLE) role for task $TASK_ID" \
-    --command "$CMD" \
+    --focus \
     --json 2>&1)"
   echo "$RESPONSE" | tail -5
 
@@ -107,15 +56,14 @@ while [[ $spawn_attempt -lt 2 ]]; do
     continue
   fi
 
-  # tui-idle 체크 — kiro-cli TUI 가 초기화되고 idle 상태 도달하는지
-  sleep 3
-  WAIT_RESP="$(orca terminal wait --terminal "$HANDLE" --for tui-idle --timeout-ms 15000 --json 2>&1)"
+  # kiro-cli TUI 가 로드될 때까지 대기 (초기 splash + v3 recommend 등 포함)
+  echo "  TUI 로드 대기 (최대 20초)..."
+  WAIT_RESP="$(orca terminal wait --terminal "$HANDLE" --for tui-idle --timeout-ms 20000 --json 2>&1)"
   if echo "$WAIT_RESP" | grep -q '"satisfied":[[:space:]]*true'; then
     echo "  ✓ kiro-cli TUI 로드 확인"
     break
   else
-    echo "  ⚠ kiro-cli TUI 로드 실패 (tui-idle timeout). 재시도..."
-    # 실패한 터미널 close
+    echo "  ⚠ TUI 로드 timeout"
     orca terminal close --terminal "$HANDLE" --json >/dev/null 2>&1 || true
     HANDLE=""
     sleep 2
@@ -123,12 +71,30 @@ while [[ $spawn_attempt -lt 2 ]]; do
 done
 
 if [[ -z "$HANDLE" ]]; then
-  echo "⚠ kiro spawn 2회 모두 실패. 수동 복구 필요: ./scripts/tasks.sh spawn $TASK_ID $ROLE"
+  echo "⚠ kiro spawn 2회 모두 실패. 수동 복구: ./scripts/tasks.sh spawn $TASK_ID $ROLE"
   exit 1
 fi
 
-# 성공: handle 기록
+# TUI 안정화 추가 대기 (initial input prompt 가 준비될 때까지)
+sleep 2
+
+# 프롬프트 주입 — kiro-cli 는 initial text input 창에 그대로 들어감
+echo "  → 프롬프트 주입 (${#PROMPT} chars)..."
+SEND_RESP="$(orca terminal send \
+  --terminal "$HANDLE" \
+  --text "$PROMPT" \
+  --enter \
+  --wait-submit 10 \
+  --json 2>&1)"
+if echo "$SEND_RESP" | grep -q '"accepted":[[:space:]]*true'; then
+  echo "  ✓ 프롬프트 전달 완료"
+else
+  echo "  ⚠ 프롬프트 주입 응답 이상 — kiro 창에서 수동 확인 필요"
+  echo "$SEND_RESP" | tail -5
+fi
+
+# handle 기록
 mkdir -p "$MAIN_REPO_ROOT/.harness/chat"
 echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"$ROLE\",\"agent\":\"kiro\",\"handle\":\"$HANDLE\"}" \
   >> "$MAIN_REPO_ROOT/.harness/chat/${TASK_ID}.handles"
-echo "✓ kiro-cli 세션 시작, handle=$HANDLE"
+echo "✓ kiro 세션 시작, handle=$HANDLE"
