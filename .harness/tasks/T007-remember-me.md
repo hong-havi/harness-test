@@ -13,7 +13,7 @@ required_roles:
   # - { role: frontend,   agent: claude }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: claude }
-current_role: planner
+current_role: architect
 role_history: []
 ports:
   web: 3070
@@ -150,30 +150,109 @@ _(T007 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 ---
 
 ## Design
-<architect 작성>
 
 ### 데이터 모델
-<엔티티/스키마 변경 — DDL 수준>
+- 스키마/엔티티 변경 **없음**. `members` 테이블·마이그레이션 영향 없음.
+- 쿠키/토큰 수명만 조정 — 서버 상태는 stateless JWT 그대로.
 
 ### API 계약
-| Method | Path | Auth | 요청 DTO | 응답 | 상태 코드 |
+
+| Method | Path | Auth | 요청 DTO | 응답 바디 | 응답 쿠키 | 상태 코드 |
+|---|---|---|---|---|---|---|
+| POST | `/auth/login` | 없음 | `LoginDto { userId: string; password: string; rememberMe?: boolean }` | `PublicMember { id, userId, nickname }` | `access_token` (HttpOnly), `csrf_token` (readable), 둘 다 동일 Max-Age 또는 둘 다 session cookie | 200 OK / 400 (DTO) / 401 (자격 불일치) |
+
+- 요청 DTO 검증:
+  - `userId: string` (기존)
+  - `password: string` (기존)
+  - `rememberMe?: boolean` — `@IsBoolean() @IsOptional()`. `transform: true` 상태의 `ValidationPipe` 에서 비-boolean(문자열 "true", 숫자, 등) 은 400 Bad Request.
+- 응답 바디·에러 응답 포맷은 PRD §5.3 (성공=리소스/`ok`, 실패=`{ statusCode, message }`) 와 일치 — 기존과 동일, 변경 없음.
+- `rememberMe` 값 → 서버 결정 테이블:
+
+  | `dto.rememberMe` | JWT `expiresIn` | 쿠키 Max-Age |
+  |---|---|---|
+  | `true` | `604800` (7일, 상수) | `Max-Age=604800` |
+  | `false` 또는 미전송(`undefined`) | `JWT_EXPIRES_IN` env (기본 `3600`) | 미설정 → session cookie |
+
+- 상수: `REMEMBER_ME_EXPIRES_SECONDS = 604800` — `apps/api/src/auth/auth.service.ts` 상단에 선언. 환경변수화하지 않음 (Plan 범위 외).
 
 ### 흐름
-- 1. ...
-- 2. ...
+
+로그인 (rememberMe=true)
+1. 클라이언트 `/login` 폼 submit → `POST /auth/login` body `{ userId, password, rememberMe: true }`.
+2. `AuthController.login` → `AuthService.login(dto)`.
+3. `AuthService.login`:
+   - 자격 검증 (기존 로직 그대로 — 타이밍 공격 완화 포함).
+   - `expiresIn = REMEMBER_ME_EXPIRES_SECONDS` (= 604800).
+   - `jwtService.signAsync(payload, { expiresIn })`.
+   - `csrfToken = randomBytes(32).hex`.
+   - 반환 `LoginResult { member, accessToken, csrfToken, maxAgeSeconds: 604800 }`.
+4. 컨트롤러에서 `res.cookie('access_token', ..., cookieOptions(result.maxAgeSeconds))` + `res.cookie('csrf_token', ..., { ..., httpOnly: false })`. 두 쿠키 모두 `Max-Age=604800`.
+5. 응답 200 OK + `PublicMember`.
+
+로그인 (rememberMe=false 또는 미전송)
+1~2. 동일.
+3. `AuthService.login`:
+   - `expiresIn = Number(process.env.JWT_EXPIRES_IN ?? 3600)` — 기존 그대로.
+   - 반환 `maxAgeSeconds: null` (세션 쿠키 신호).
+4. 컨트롤러는 `maxAgeSeconds === null` 이면 `maxAge` **키를 포함하지 않는** 쿠키 옵션으로 설정 → Express 가 `Max-Age`/`Expires` 둘 다 생략 → 브라우저 세션 쿠키.
+5. 응답 200 OK.
+
+로그아웃 (회귀 없음)
+1. `POST /auth/logout` → 기존 그대로. `cookieOptions(0)` 는 "즉시 만료" 의미로 **의미 보존** — 아래 설계 결정 참조.
+
+### 설계 결정: 세션 쿠키 신호 (Plan 수정)
+
+Plan 초안은 `maxAgeSeconds === 0 → session cookie` 라고 적었으나, 이는 기존 **logout** 이 사용하는 `cookieOptions(0)` ("Max-Age=0 으로 즉시 만료") 과 충돌한다. 두 의미(세션 쿠키 vs 즉시 만료)를 하나의 센티넬로 공유하면 logout 쿠키가 session cookie 로 재해석돼 **클라이언트가 로그아웃되지 않을 수 있다**.
+
+→ 신호를 **`maxAgeSeconds: number | null`** 로 변경:
+- `number > 0` : 해당 초 만큼 Max-Age (로그인 성공 시 7일, 또는 레거시 1시간 등).
+- `number === 0` : `Max-Age=0` 유지 — logout 전용 즉시 만료.
+- `null` : session cookie — Express 가 `maxAge` 를 생략.
+
+`cookieOptions(maxAge: number | null)` 로 시그니처 변경, `maxAge === null` 이면 반환 객체에 `maxAge` 키 자체를 포함하지 않도록 수정. `LoginResult.maxAgeSeconds` 타입을 `number | null` 로 변경.
 
 ### 보안 / 에러
-- 입력 검증 지점:
-- 권한 체크:
-- 에러 응답:
 
-### 마이그레이션 (DB 변경 있을 때)
-- 이름: `<timestamp>-<name>`
-- Up: ...
-- Down: ...
+- **입력 검증 지점**: `LoginDto` — `rememberMe` 는 `@IsBoolean() @IsOptional()`. ValidationPipe `transform: true, whitelist: true` (현 설정 유지) 에서 unknown 필드 제거, 타입 불일치는 400. `main.ts`/`app.module.ts` ValidationPipe 설정은 변경 없음을 전제로 함 — architect 가 설정이 이와 다르면 backend 역할에서 플래그.
+- **권한 체크**: 로그인 엔드포인트는 비인증. 변경 없음. 체크박스 값이 민감 자원 접근을 바꾸지 않으므로 추가 Guard 불필요.
+- **쿠키 속성 유지 (CRITICAL)**:
+  - `access_token`: `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure`(prod).
+  - `csrf_token`: `HttpOnly=false` (JS 가 읽어 X-CSRF-Token 헤더로 송신), `SameSite=Lax`, `Path=/`.
+  - rememberMe 분기로 **어느 속성도 바꾸지 않는다**. Max-Age 만 조정.
+- **세션 수명 ↔ 토큰 수명 정합성**: Plan 의 Q1 답 (b) 에 따라 쿠키 Max-Age 와 JWT `exp` 가 **동일** 하므로 "쿠키는 살아있는데 토큰은 만료" 간극이 사라진다. Refresh token 미구현이지만 UX 리스크 없음.
+- **공용 기기 리스크**: rememberMe=false 가 **기본값**(unchecked) 이어야 공용 PC 에서 실수로 7일 유지가 발생하지 않는다 (수용 기준에 체크 완료).
+- **에러 응답 (불변)**:
+  - 400 Bad Request: `{ statusCode: 400, message: ["rememberMe must be a boolean value"], error: "Bad Request" }` (NestJS 기본).
+  - 401 Unauthorized: `{ statusCode: 401, message: "아이디 또는 비밀번호가 일치하지 않습니다." }`.
+- **로그 노출 금지**: `rememberMe` 값은 로그에 남기지 않음 (현재 request body 로깅 없음 — 변경 없음).
 
-### 테스트 포인트
-- QA가 확인할 지점 ...
+### 마이그레이션
+- 해당 없음 — DB 스키마 변경 없음.
+
+### 테스트 포인트 (QA 참고)
+
+Unit (backend)
+- `AuthService.spec.ts` — `login`:
+  - `rememberMe: true` → `LoginResult.maxAgeSeconds === 604800`, JWT 디코드 결과 `exp - iat === 604800`.
+  - `rememberMe: false` → `maxAgeSeconds === null`, `exp - iat === 3600` (또는 `JWT_EXPIRES_IN` 값).
+  - `rememberMe: undefined` → `rememberMe: false` 와 동일 결과.
+  - 자격 불일치 경로가 rememberMe 와 **무관** 하게 401 (기존 2 케이스 회귀).
+
+E2E/API 레벨 (수용 기준 ↔ 수동 확인)
+- `curl -i -X POST /auth/login -d '{"userId":"...","password":"...","rememberMe":true}'`
+  - 응답 헤더 `Set-Cookie` 2개(access_token, csrf_token) 각각 `Max-Age=604800` 포함.
+  - access_token 에 `HttpOnly`, 두 쿠키 모두 `SameSite=Lax; Path=/`.
+- 동일 요청 `rememberMe:false` → `Max-Age`/`Expires` 토큰 **없음**.
+- 동일 요청 `rememberMe` **omit** → session cookie 동작 (회귀).
+- `rememberMe: "yes"` 와 같은 non-boolean → 400.
+- 로그인 후 `GET /members/me` 200 OK (기존 e2e).
+- Logout 회귀: 로그인(rememberMe=true) 후 `/auth/logout` → `Set-Cookie: access_token=; Max-Age=0; ...` 로 즉시 만료 (설계 결정 §세션 쿠키 신호 검증).
+
+Frontend
+- `/login` 체크박스 초기 unchecked, `?signup=1`/`?joined=1`/에러 상태 조합과 무관하게 렌더링.
+- 폼 submit payload 에 `rememberMe` boolean 필드 포함 — DevTools Network.
+- 체크 후 로그인 → DevTools Application → Cookies 에 `access_token` Expires=`7일 뒤`, 미체크 → Expires=`Session`.
+- 재접속(브라우저 재시작) 시: rememberMe=true 세션은 유지, false 세션은 로그아웃됨 (수동 스모크, 자동화 범위 외).
 
 ---
 
