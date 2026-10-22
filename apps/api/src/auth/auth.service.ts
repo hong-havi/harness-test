@@ -16,6 +16,7 @@ import { JoinDto } from './dto/join.dto';
 
 const BCRYPT_SALT_ROUNDS = 10;
 const DUP_ENTRY_CODE = 'ER_DUP_ENTRY';
+const REMEMBER_ME_EXPIRES_SECONDS = 604800;
 const NICKNAME_MAX_LENGTH = 32;
 const NICKNAME_SUFFIX_LENGTH = 4;
 const NICKNAME_MAX_ATTEMPTS = 5;
@@ -34,7 +35,8 @@ export interface LoginResult {
   member: PublicMember;
   accessToken: string;
   csrfToken: string;
-  maxAgeSeconds: number;
+  // number > 0: 쿠키 Max-Age (초), null: session cookie (Max-Age 생략)
+  maxAgeSeconds: number | null;
 }
 
 @Injectable()
@@ -163,7 +165,10 @@ export class AuthService {
       throw invalid;
     }
 
-    const expiresIn = Number(process.env.JWT_EXPIRES_IN ?? 3600);
+    const rememberMe = dto.rememberMe === true;
+    const expiresIn = rememberMe
+      ? REMEMBER_ME_EXPIRES_SECONDS
+      : Number(process.env.JWT_EXPIRES_IN ?? 3600);
     const accessToken = await this.jwtService.signAsync(
       {
         sub: String(member.id),
@@ -182,7 +187,7 @@ export class AuthService {
       },
       accessToken,
       csrfToken,
-      maxAgeSeconds: expiresIn,
+      maxAgeSeconds: rememberMe ? REMEMBER_ME_EXPIRES_SECONDS : null,
     };
   }
 
