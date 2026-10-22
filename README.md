@@ -315,6 +315,23 @@ SLACK_CHANNEL_ID=C0XXXXXXX
 
 Orca 창에 planner (claude) 세션이 자동 열림 → 자동 체인 (planner → architect → backend → ... → reviewer merge).
 
+### 같은 Slack 봇을 다른 PC/다중 PC에서 쓸 때
+
+Slack 토큰·채널은 **Slack 서버 자원**이라 PC 와 무관하게 공유 가능. `.env` 만 복사하면 됨.
+
+| 자원 | 공유 가능 | 메모 |
+|------|:--------:|------|
+| `SLACK_BOT_TOKEN` | ✅ | 워크스페이스/앱 레벨 자격증명 |
+| `SLACK_CHANNEL_ID` | ✅ | Slack 서버 영구 ID |
+| 봇의 채널 멤버십 | ✅ | 재초대 불필요 |
+| `.env` 파일 | ❌ (gitignore) | 안전한 경로(비밀번호 매니저/암호 메신저)로 수동 전달 |
+
+**⚠ coord 는 1인 1실행 원칙**:
+- PID lock 은 **로컬 PC 안에서만** 중복 방지
+- 서로 다른 PC 에서 같은 토큰으로 coord 를 **동시에** 돌리면 Slack 메시지 중복 응답 + task 번호/worktree 충돌
+- 한 사람이 PC 교체 시: 이전 PC 에서 `./scripts/coord.sh stop` → 새 PC 에서 start
+- 두 사람이 각자 테스트 시: **별도 채널 + 별도 봇** 분리 권장 (또는 한 명만 coord 돌리고 다른 쪽은 Slack 명령 전송만)
+
 ### 셋업 문제 해결
 
 | 증상 | 원인 | 조치 |
