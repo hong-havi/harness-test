@@ -36,8 +36,22 @@ cat <<EOF
    \`\`\`
 
 2. **완료 리포트**를 chat log 에 기록 (Slack 스레드에 자동 미러됨). **반드시 아래 포맷 유지**:
+
+   **긴 리포트 (여러 섹션/bullet) 는 반드시 \`--from <file>\` 사용** — argv 로 넘기면 쉘 escape 로 뉴라인 손실됨:
    \`\`\`
-   ./scripts/chat.sh append ${TASK_ID} ${ROLE} coordinator deliver "<multiline-report>"
+   cat > /tmp/deliver-${TASK_ID}.md << 'EOF'
+   ✅ ${ROLE} 작업 완료 (task ${TASK_ID})
+
+   ## 요약
+   • ...
+   EOF
+   ./scripts/chat.sh append ${TASK_ID} ${ROLE} coordinator deliver --from /tmp/deliver-${TASK_ID}.md
+   rm -f /tmp/deliver-${TASK_ID}.md
+   \`\`\`
+
+   짧은 1~2줄 메시지는 argv 로 OK:
+   \`\`\`
+   ./scripts/chat.sh append ${TASK_ID} ${ROLE} coordinator deliver "<short message>"
    \`\`\`
 
    리포트 포맷 (한 메시지 안에 전부, markdown):

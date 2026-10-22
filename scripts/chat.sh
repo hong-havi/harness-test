@@ -97,10 +97,27 @@ cmd_append() {
   slack_mirror "$id" "$from" "$to" "$type" "$msg" || true
 }
 
+# agent 가 one-liner 로 보낸 긴 리포트를 섹션/bullet 앞에서 자동 줄바꿈.
+# 안전: 이미 \n 이 있는 메시지는 유지 (중복 삽입 없음 — sed 가 이전 \n 유지).
+auto_newline_markdown() {
+  local m="$1"
+  # 중간에 섹션 헤더가 나타나면 그 앞에 두 줄 띄움
+  m="$(printf '%s' "$m" | sed -E 's| (## [^#])|\n\n\1|g')"
+  # bullet 앞에 한 줄 띄움 (• 또는 - 앞)
+  m="$(printf '%s' "$m" | sed -E 's| (• )|\n\1|g; s| (- )|\n\1|g')"
+  # 숫자 리스트도 (예: " 1. ", " 2. ")
+  m="$(printf '%s' "$m" | sed -E 's| ([0-9]+\. )|\n\1|g')"
+  printf '%s' "$m"
+}
+
 # 메시지 포맷 — type 별로 user 친화적인 헤더 + body
 # role 명(from)을 메인으로 노출, type 별 이모지
 format_slack_body() {
   local from="$1" to="$2" type="$3" msg="$4"
+  # 긴 리포트 (deliver/question) 는 자동 섹션 줄바꿈
+  case "$type" in
+    deliver|question|answer|report) msg="$(auto_newline_markdown "$msg")" ;;
+  esac
   local header
   case "$type" in
     request)
