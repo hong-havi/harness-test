@@ -102,30 +102,38 @@ cat <<EOF
 - 작업 결과물을 반드시 커밋한 뒤 \`advance\` 하세요. uncommitted 상태에서 advance 하면 다음 역할이 변경을 못 봅니다.
 - 세션 자체 종료는 agent CLI 가 자동으로 처리. shell 을 수동으로 \`exit\` 할 필요 없음.
 
-## 사용자에게 질문해야 할 때 (중요 — 반드시 따를 것)
+## 사용자에게 질문해야 할 때 (매우 중요 — 반드시 따를 것)
 
 PRD 모호, 결정 필요, 추가 데이터 요청 등 user 답이 필요한 경우:
 
 ### ❌ 절대 하지 말 것
 
+- **응답 텍스트에 '질문: ...' 을 쓰고 사용자 입력을 기다리는 것**. agent 응답은 user 에게 안 보이고(터미널에만), user 는 Slack 에서만 답. 응답에 질문만 쓰면 **무한 대기**.
 - **CLI 의 기본 선택지/프롬프트 다이얼로그**(numbered choice, "Chat about this", confirmation prompt 등) 사용 금지.
-  - claude code 의 선택지 창 (\"1. ... 2. ... 3. Type something\") 금지
-  - interactive input prompt 금지
-- 이유: **user 는 Slack 에서만 답**합니다. TUI 질문은 Slack 으로 안 가서 user 가 못 보고 무한 대기 됨.
+- 이유: **user 는 Slack 에서만 답**합니다. 터미널/응답 텍스트의 질문은 전달 안 됨.
 
-### ✅ 반드시 할 것
+### 올바른 순서 (매 턴마다 자문)
 
-1. **질문을 chat log 에 \`question\` 타입으로 append**:
+**질문해야 할 내용이 있는가?** → 있으면 **bash tool 로 먼저 `chat.sh append ... question` 호출** → 그 후 응답.
+질문 없으면 평소대로 응답.
+
+### ✅ 반드시 할 것 (순서 중요)
+
+1. **bash tool 로 chat.sh 호출** — 응답 텍스트에 질문 쓰지 말고 **먼저** 명령을 실행:
    \`\`\`
-   ./scripts/chat.sh append ${TASK_ID} ${ROLE} user question "<구체적인 질문 — 선택지가 있으면 질문문 안에 '옵션 A/B/C' 로 명시>"
+   ./scripts/chat.sh append ${TASK_ID} ${ROLE} user question "<Q1>: ...
+   <Q2>: ...
+   <Q3>: ..."
    \`\`\`
-   이 메시지는 자동으로 Slack 스레드에 미러됩니다.
+   이 메시지가 Slack 스레드에 미러됩니다.
 
-2. 여러 결정이 필요하면 **하나의 chat.sh question 호출에 번호 매겨 다 묶어 전송** (Q1/Q2/Q3) — 여러 번 보내지 말 것.
+2. 여러 결정이 필요하면 **하나의 chat.sh question 호출에 Q1/Q2/Q3 로 묶어 전송** (여러 번 보내지 말 것).
 
-3. **답을 기다립니다**. 사용자가 Slack 스레드에 reply 하면 Coordinator 가 당신의 터미널에 자동 주입합니다. 그러면 일반 agent 응답으로 받고 작업 재개.
+3. chat.sh 성공 후 agent 응답은 **"Slack 에 질문 N건 포스트, 답 대기 중" 만** 남기고 세션 그대로 유지. 응답에 질문 반복 금지.
 
-4. 답 받기 전까지는 진행 금지. 선택지를 TUI 로 띄우지 말고 chat.sh 호출 후 **그냥 대기**.
+4. 사용자가 Slack 스레드에 reply 하면 Coordinator 가 당신의 터미널에 **자동 주입**합니다. 주입된 텍스트가 일반 user input 처럼 들어옴 → 그 때 작업 재개.
+
+5. 답 받기 전까지는 TUI 선택지/프롬프트 **절대 띄우지 말고** 그냥 대기 상태 유지.
 
 ### 선택지 질문 예시
 
