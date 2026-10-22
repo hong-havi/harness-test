@@ -176,7 +176,7 @@ describe('AuthService', () => {
   });
 
   describe('login', () => {
-    it('returns tokens on success', async () => {
+    async function seedLoginMember() {
       const hash = await bcrypt.hash('password12', 10);
       (repo as any).__qb.getOne.mockResolvedValue({
         id: '7',
@@ -184,13 +184,64 @@ describe('AuthService', () => {
         nickname: 'alice',
         passwordHash: hash,
       });
+    }
+
+    it('returns tokens on success (no rememberMe → session cookie)', async () => {
+      await seedLoginMember();
 
       const result = await service.login({ userId: 'alice01', password: 'password12' });
 
       expect(result.member).toEqual({ id: '7', userId: 'alice01', nickname: 'alice' });
       expect(result.accessToken).toBe('jwt.signed.value');
       expect(result.csrfToken).toMatch(/^[0-9a-f]{64}$/);
-      expect(result.maxAgeSeconds).toBe(3600);
+      expect(result.maxAgeSeconds).toBeNull();
+      expect(jwt.signAsync).toHaveBeenCalledWith(
+        { sub: '7', user_id: 'alice01', nickname: 'alice' },
+        { expiresIn: 3600 },
+      );
+    });
+
+    it('rememberMe=true → maxAgeSeconds=604800 and JWT expiresIn=604800', async () => {
+      await seedLoginMember();
+
+      const result = await service.login({
+        userId: 'alice01',
+        password: 'password12',
+        rememberMe: true,
+      });
+
+      expect(result.maxAgeSeconds).toBe(604800);
+      expect(jwt.signAsync).toHaveBeenCalledWith(
+        { sub: '7', user_id: 'alice01', nickname: 'alice' },
+        { expiresIn: 604800 },
+      );
+    });
+
+    it('rememberMe=false → session cookie, JWT expiresIn from env (3600)', async () => {
+      await seedLoginMember();
+
+      const result = await service.login({
+        userId: 'alice01',
+        password: 'password12',
+        rememberMe: false,
+      });
+
+      expect(result.maxAgeSeconds).toBeNull();
+      expect(jwt.signAsync).toHaveBeenCalledWith(
+        { sub: '7', user_id: 'alice01', nickname: 'alice' },
+        { expiresIn: 3600 },
+      );
+    });
+
+    it('rememberMe=undefined behaves same as false (regression)', async () => {
+      await seedLoginMember();
+
+      const result = await service.login({
+        userId: 'alice01',
+        password: 'password12',
+      });
+
+      expect(result.maxAgeSeconds).toBeNull();
       expect(jwt.signAsync).toHaveBeenCalledWith(
         { sub: '7', user_id: 'alice01', nickname: 'alice' },
         { expiresIn: 3600 },
