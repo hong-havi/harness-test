@@ -107,7 +107,7 @@ handle_command() {
       ;;
     "help")
       reply "📘 *하네스 Coordinator 명령*
-\`new <slug> [자연어 설명...]\` — 새 task 생성. 설명은 planner 에게 User Request 로 전달
+\`new <slug> [자연어 설명...]\` — 새 task 생성. 설명 생략 시 \`.harness/requests/<slug>.md\` 자동 로드
 \`advance <task-id>\` — 다음 역할로 (커밋 유무로 추론)
 \`advance <task-id> succeeded|failed\` — qa/reviewer outcome 명시
 \`rework <task-id> <role>\` — 지정 역할로 되돌리고 재 spawn (fail 복구용)

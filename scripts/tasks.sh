@@ -50,9 +50,13 @@ usage() {
 Usage: $0 <command> [args]
 
 Commands:
-  new <slug> [자연어 요구사항...] [--no-spawn]
+  new <slug> [자연어 요구사항...] [--from <path>] [--no-spawn]
                                 Create task + worktree + branch (planner 자동 spawn).
-                                slug 뒤 토큰들은 User Request 로 task.md + Slack 에 전달.
+                                요구사항 전달 우선순위:
+                                  --from <path>  명시 파일
+                                  인라인 자연어   slug 뒤 토큰들
+                                  자동 매칭      .harness/requests/<slug>.md 있으면 사용
+                                User Request 섹션으로 task.md + chat log 에 삽입.
   list                          Show active tasks
   advance [task-id] [--no-spawn] [--outcome succeeded|failed]
                                 Move current_role to next, auto-spawn 다음 agent.
@@ -190,23 +194,37 @@ cmd_new() {
   local slug=""
   local no_spawn=0
   local description=""
+  local from_file=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-spawn) no_spawn=1; shift ;;
+      --from) from_file="$2"; shift 2 ;;
       -*) die "Unknown flag: $1" ;;
       *)
         if [[ -z "$slug" ]]; then
           slug="$1"; shift
         else
-          # slug 뒤의 모든 토큰은 description 으로 결합
           description="$*"
           break
         fi
         ;;
     esac
   done
-  [[ -n "$slug" ]] || die "slug 가 필요합니다. 예: $0 new signup-api [자연어 요구사항]"
+  [[ -n "$slug" ]] || die "slug 가 필요합니다. 예: $0 new signup-api [자연어 요구사항] 또는 --from <path>"
   [[ "$slug" =~ ^[a-z0-9-]+$ ]] || die "slug 는 kebab-case 소문자+숫자+하이픈만 허용"
+
+  # description 결정: --from (명시) > 인라인 > .harness/requests/<slug>.md (자동 매칭)
+  if [[ -n "$from_file" ]]; then
+    [[ -f "$from_file" ]] || die "요구사항 파일을 찾을 수 없음: $from_file"
+    description="$(cat "$from_file")"
+    info "요구사항 파일 로드: $from_file ($(wc -l < "$from_file") lines)"
+  elif [[ -z "$description" ]]; then
+    local auto_req="$MAIN_REPO_ROOT/.harness/requests/${slug}.md"
+    if [[ -f "$auto_req" ]]; then
+      description="$(cat "$auto_req")"
+      info "자동 매칭 요구사항 파일 로드: .harness/requests/${slug}.md ($(wc -l < "$auto_req") lines)"
+    fi
+  fi
 
   local id
   id="$(next_task_num)"
@@ -277,22 +295,37 @@ cmd_new() {
   info "  → docker-compose.override.yml 생성"
 
   # 5) description 이 주어지면 task.md 에 "## User Request" 섹션 삽입 (frontmatter 바로 뒤)
+  # 짧은 1줄은 blockquote, 긴 multi-line 은 fenced block 로 그대로 보존.
   if [[ -n "$description" ]]; then
     local tmpf="${task_abs}.tmp"
-    awk -v req="$description" -v tid="$id" '
+    local req_file="${task_abs}.req"
+    printf '%s\n' "$description" > "$req_file"
+    local lc
+    lc=$(wc -l < "$req_file")
+    awk -v tid="$id" -v reqf="$req_file" -v lc="$lc" '
       BEGIN { fm=0; done=0 }
       /^---$/ { fm++; print; if (fm==2 && !done) {
         print ""
         print "## User Request"
         print ""
-        print "> " req
+        if (lc+0 <= 1) {
+          # 짧은 한 줄 — blockquote
+          while ((getline line < reqf) > 0) print "> " line
+        } else {
+          # 긴 multi-line — 원문 그대로 (markdown 형식 유지)
+          while ((getline line < reqf) > 0) print line
+        }
+        close(reqf)
         print ""
-        print "(" tid " 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을 기준으로 Plan 섹션을 작성한다.)"
+        print "---"
+        print ""
+        print "_(" tid " 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을 기준으로 Plan 섹션을 작성한다.)_"
         print ""
         done=1
       }; next }
       { print }
     ' "$task_abs" > "$tmpf" && mv "$tmpf" "$task_abs"
+    rm -f "$req_file"
     git add "$task_rel"
     git -c core.hooksPath=/dev/null commit --amend --no-edit >/dev/null 2>&1 || true
     info "  → task.md 에 User Request 섹션 추가"
@@ -302,7 +335,17 @@ cmd_new() {
   mkdir -p "$CHAT_DIR"
   "$SCRIPT_DIR/chat.sh" append "$id" harness tasks note "task $id ($slug) created" >/dev/null
   if [[ -n "$description" ]]; then
-    "$SCRIPT_DIR/chat.sh" append "$id" user coordinator request "$description" >/dev/null
+    # 긴 문서는 Slack 에 요약 + 파일 경로 안내 (스레드 폭증 방지)
+    local desc_lc
+    desc_lc=$(printf '%s\n' "$description" | wc -l)
+    if [[ $desc_lc -le 20 ]]; then
+      "$SCRIPT_DIR/chat.sh" append "$id" user coordinator request "$description" >/dev/null
+    else
+      local first_line
+      first_line="$(printf '%s\n' "$description" | head -1)"
+      "$SCRIPT_DIR/chat.sh" append "$id" user coordinator request "📄 상세 요구사항 (${desc_lc}줄) — task.md 의 ## User Request 섹션 참조
+첫줄: ${first_line}" >/dev/null
+    fi
   fi
 
   info ""
