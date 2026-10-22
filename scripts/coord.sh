@@ -111,6 +111,8 @@ handle_command() {
 \`advance <task-id>\` — 다음 역할로 (커밋 유무로 추론)
 \`advance <task-id> succeeded|failed\` — qa/reviewer outcome 명시
 \`rework <task-id> <role>\` — 지정 역할로 되돌리고 재 spawn (fail 복구용)
+\`spawn <task-id> [role]\` — 현재 또는 지정 역할 agent 재 spawn (복구용)
+\`merge <task-id>\` — reviewer 수동 호출 (reviewer agent 가 못했을 때)
 \`status\` — 활성 task 목록
 \`help\` — 이 안내
 
@@ -193,6 +195,44 @@ $(echo "$out" | tail -15)
         log_decision "task_rework" "$tid → $trole"
       else
         reply "❌ rework 실패:
+\`\`\`
+$out
+\`\`\`"
+      fi
+      ;;
+    "spawn "*)
+      local args="${cmd#spawn }"
+      local tid trole
+      tid="$(echo "$args" | awk '{print $1}')"
+      trole="$(echo "$args" | awk '{print $2}')"
+      [[ -n "$tid" ]] || { reply "⚠ 사용법: \`spawn <task-id> [role]\` (role 생략시 현재 current_role 사용)"; return; }
+      local out
+      if out="$("$SCRIPT_DIR/tasks.sh" spawn "$tid" "$trole" 2>&1)"; then
+        reply "🚀 *spawn $tid${trole:+ $trole}*
+\`\`\`
+$(echo "$out" | tail -8)
+\`\`\`"
+        log_decision "task_spawn" "$tid ${trole:-current}"
+      else
+        reply "❌ spawn 실패:
+\`\`\`
+$out
+\`\`\`"
+      fi
+      ;;
+    "merge "*)
+      local tid="${cmd#merge }"
+      tid="$(echo "$tid" | awk '{print $1}')"
+      [[ -n "$tid" ]] || { reply "⚠ 사용법: \`merge <task-id>\`"; return; }
+      local out
+      if out="$("$SCRIPT_DIR/tasks.sh" merge "$tid" 2>&1)"; then
+        reply "🎉 *merged $tid*
+\`\`\`
+$(echo "$out" | tail -20)
+\`\`\`"
+        log_decision "task_merged" "$tid"
+      else
+        reply "❌ merge 실패:
 \`\`\`
 $out
 \`\`\`"

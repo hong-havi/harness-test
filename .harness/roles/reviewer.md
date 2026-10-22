@@ -65,21 +65,16 @@
    - **Blocker**: 반드시 수정. `rework` 로 반려.
    - **Suggest**: 선택 수정. pass 가능.
 3. 결정:
-   - Blocker 없음 → **병합 수행**:
-     ```bash
-     git fetch origin
-     git rebase origin/main                # 충돌 시 §충돌 처리
-     git checkout main
-     git pull --ff-only
-     git merge --ff-only task/T###-<slug>
-     # 또는 fast-forward 가 안 되면 rework 반려
-     ```
-     병합 완료 후:
-     ```bash
-     ./scripts/tasks.sh merge <task-id>    # worktree + 브랜치 정리, board 반영
-     ```
-     chat `deliver` → coordinator 가 user에 리포트.
-   - Blocker 있음 → status `rework`, chat `handoff`.
+   - **Blocker 없음**:
+     1. "approve for merge" 를 커밋 (리뷰 노트 + task.md Review notes 섹션)
+     2. chat `deliver` — 리뷰 결과 요약
+     3. **반드시** 다음을 호출 (수동 git 명령 X):
+        ```bash
+        ./scripts/tasks.sh merge
+        ```
+        `merge` 가 자동 수행: rebase main → ff-only merge → worktree/브랜치 cleanup → task.md/chat → archive. **advance 가 아니다.** merge 호출 생략 시 체인 미완료.
+     4. ff-only 가 안 되면(히스토리 분기) merge 가 fail — rework 로 돌림.
+   - **Blocker 있음** → chat `handoff` + `./scripts/tasks.sh rework <task-id> <원담당역할>` 호출. merge 금지.
 4. 사소한 오타·1-2줄 수정은 reviewer가 직접 커밋 가능 (`T### [reviewer]: typo fix` 식). 그 외는 반려.
 
 ## 충돌 처리

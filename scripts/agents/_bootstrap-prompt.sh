@@ -62,11 +62,32 @@ cat <<EOF
 
    요약은 간결하게 (각 bullet 1~2줄). 파일 경로는 **실제 작성/수정한 모든 것** 나열 (task.md 섹션도 "파일: .harness/tasks/${TASK_ID}-\<slug\>.md 의 ## XXX 섹션" 식으로).
 
-3. 다음 역할로 커서를 넘깁니다. **자동으로 다음 agent 세션이 spawn 됩니다**:
+3. **다음 역할로 전환** — 역할별로 다른 명령:
+
+   **일반 역할 (planner, architect, designer, backend, frontend)**:
    \`\`\`
    ./scripts/tasks.sh advance
    \`\`\`
-   (qa/reviewer 역할이면 \`--outcome succeeded\` 또는 \`--outcome failed\` 필수)
+
+   **qa 역할**: \`--outcome\` 필수.
+   \`\`\`
+   ./scripts/tasks.sh advance --outcome succeeded     # 전수 pass
+   ./scripts/tasks.sh rework ${TASK_ID} <원담당역할>   # 1개 이상 fail
+   \`\`\`
+
+   **reviewer 역할** (**중요** — 다른 역할과 다름):
+   체크리스트 통과 + "approve for merge" 커밋 직후, **반드시** 다음을 호출:
+   \`\`\`
+   ./scripts/tasks.sh merge
+   \`\`\`
+   \`advance\` 가 아닙니다. \`merge\` 가 자동으로:
+   - rebase main
+   - ff-only merge
+   - worktree + 브랜치 cleanup
+   - task.md/chat/handles → archive
+   를 수행합니다. **merge 호출을 생략하지 마세요** — coordinator 는 reviewer 의 수동 merge 를 기다립니다.
+
+   Blocker 있어 pass 못 하는 경우: \`./scripts/tasks.sh rework ${TASK_ID} <원담당역할>\` (merge 금지).
 
 4. 이 세션 종료.
 

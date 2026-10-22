@@ -422,19 +422,41 @@ cmd_advance() {
     local handles_file="$CHAT_DIR/${id}.handles"
     if [[ -f "$handles_file" ]]; then
       local prev_handle
-      prev_handle=$(awk -F'"' '/"handle":/{h=$0} END{if(h) print h}' "$handles_file" | awk -F'"' '{for(i=1;i<=NF;i++) if($i=="handle:")print $(i+2); next}' | head -1)
-      # 더 안정적: tail -1 로 마지막 라인 → handle 값 추출
       prev_handle=$(tail -1 "$handles_file" | awk -F'"handle":"' '{print $2}' | awk -F'"' '{print $1}')
       if [[ -n "$prev_handle" ]]; then
         info "이전 역할 ($current) 터미널 close: $prev_handle"
         orca terminal close --terminal "$prev_handle" --json >/dev/null 2>&1 || true
       fi
     fi
+
+    # Spawn 재시도 (최대 2회, 사이 2초 대기)
     info "다음 agent 를 자동으로 spawn 합니다..."
-    "$SCRIPT_DIR/orca/spawn.sh" "$id" "$next" || {
-      info "⚠ spawn 실패. 수동으로 진행:"
-      info "  ./scripts/role.sh $next $id"
-    }
+    local attempt=0 spawn_ok=0
+    while [[ $attempt -lt 2 ]]; do
+      attempt=$((attempt+1))
+      if "$SCRIPT_DIR/orca/spawn.sh" "$id" "$next" 2>&1; then
+        spawn_ok=1
+        break
+      fi
+      info "⚠ spawn attempt $attempt 실패"
+      [[ $attempt -lt 2 ]] && { info "  2초 후 재시도..."; sleep 2; }
+    done
+
+    if [[ $spawn_ok -eq 0 ]]; then
+      local err_msg
+      err_msg="⚠️ *${id}* : advance 는 성공했으나 **${next} agent spawn 2회 실패**. 수동 복구 필요:
+\`\`\`
+./scripts/tasks.sh spawn ${id} ${next}
+\`\`\`
+또는 Slack: \`@harness-bot spawn ${id} ${next}\` (지원 시) / 다른 agent 로 매핑 후 재시도."
+      info "$err_msg"
+      # chat log + Slack 알림
+      "$SCRIPT_DIR/chat.sh" append "$id" "harness" "coordinator" error "spawn 실패: ${next} agent 2회 재시도 실패 — 수동 복구 필요" >/dev/null 2>&1 || true
+      if [[ -n "${SLACK_BOT_TOKEN:-}" && -n "${SLACK_CHANNEL_ID:-}" ]]; then
+        "$SCRIPT_DIR/slack/send.sh" --text "$err_msg" >/dev/null 2>&1 || true
+      fi
+      return 1
+    fi
   fi
 }
 
