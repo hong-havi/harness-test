@@ -16,14 +16,20 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 
 const COOKIE_PATH = '/';
 
-function cookieOptions(maxAgeMs: number | 0) {
+// maxAgeMs:
+//   - number (>= 0): 쿠키 Max-Age (ms). 0 은 즉시 만료 (logout).
+//   - null: Max-Age 미설정 → 브라우저 세션 쿠키.
+function cookieOptions(maxAgeMs: number | null) {
   const secure = process.env.COOKIE_SECURE === 'true';
-  return {
+  const base = {
     path: COOKIE_PATH,
     sameSite: 'lax' as const,
     secure,
-    maxAge: maxAgeMs,
   };
+  if (maxAgeMs === null) {
+    return base;
+  }
+  return { ...base, maxAge: maxAgeMs };
 }
 
 @Controller('auth')
@@ -47,7 +53,8 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.authService.login(dto);
-    const maxAgeMs = result.maxAgeSeconds * 1000;
+    const maxAgeMs =
+      result.maxAgeSeconds === null ? null : result.maxAgeSeconds * 1000;
     res.cookie('access_token', result.accessToken, {
       ...cookieOptions(maxAgeMs),
       httpOnly: true,
