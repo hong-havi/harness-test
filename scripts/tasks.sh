@@ -288,10 +288,12 @@ cmd_list() {
   local rows=0
   printf "%-6s %-24s %-14s %-10s %-18s %s\n" "ID" "SLUG" "STATUS" "CURRENT" "PORTS(web/api/db)" "BRANCH"
   echo "─────────────────────────────────────────────────────────────────────────────────────────"
-  for f in "$TASKS_DIR"/T[0-9][0-9][0-9]-*.md; do
-    [[ -f "$f" ]] || continue
-    local id slug status current branch web api db
-    id=$(get_fm "$f" "id")
+  # main 의 task.md 로 ID 발견 → live task.md (worktree) 에서 실제 상태 읽음
+  for main_f in "$MAIN_REPO_ROOT/.harness/tasks"/T[0-9][0-9][0-9]-*.md; do
+    [[ -f "$main_f" ]] || continue
+    local id slug status current branch web api db f
+    id=$(get_fm "$main_f" "id")
+    f="$(live_task_file "$id")"      # 활성이면 worktree, 아니면 main 폴백
     slug=$(get_fm "$f" "slug")
     status=$(get_fm "$f" "status")
     current=$(get_fm "$f" "current_role")
