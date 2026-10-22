@@ -50,7 +50,7 @@ usage() {
 Usage: $0 <command> [args]
 
 Commands:
-  new <slug> [자연어 요구사항...] [--from <path>] [--no-spawn]
+  new <slug> [자연어 요구사항...] [--from <path>]
                                 Create task + worktree + branch (planner 자동 spawn).
                                 요구사항 전달 우선순위:
                                   --from <path>  명시 파일
@@ -58,7 +58,7 @@ Commands:
                                   자동 매칭      .harness/requests/<slug>.md 있으면 사용
                                 User Request 섹션으로 task.md + chat log 에 삽입.
   list                          Show active tasks
-  advance [task-id] [--no-spawn] [--outcome succeeded|failed]
+  advance [task-id] [--outcome succeeded|failed]
                                 Move current_role to next, auto-spawn 다음 agent.
                                 qa/reviewer 는 --outcome 필수, 그 외는 커밋 유무로 추론.
                                 --outcome failed 는 커서 이동 안 함 (rework 필요).
@@ -70,7 +70,7 @@ Commands:
   spawn [task-id] [role]        현재 또는 지정 역할 agent 재spawn (디버깅)
 
 worktree 내부에서 실행하면 task-id 자동 감지.
---no-spawn: 자동 agent spawn 비활성 (Phase 1 수동 모드와 동일).
+자동 spawn 끄려면 (사람 디버깅 전용): HARNESS_NO_SPAWN=1 ./scripts/tasks.sh ...
 EOF
 }
 
@@ -192,12 +192,12 @@ get_fm() {
 
 cmd_new() {
   local slug=""
-  local no_spawn=0
+  local no_spawn="${HARNESS_NO_SPAWN:-0}"
   local description=""
   local from_file=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --no-spawn) no_spawn=1; shift ;;
+      --no-spawn) die "--no-spawn 플래그는 제거됨. 디버깅용으로 자동 spawn 끄려면 'HARNESS_NO_SPAWN=1 ./scripts/tasks.sh ...' 로 환경변수 사용." ;;
       --from) from_file="$2"; shift 2 ;;
       -*) die "Unknown flag: $1" ;;
       *)
@@ -393,11 +393,11 @@ cmd_list() {
 # task.md 를 파싱 — "- { role: xxx, agent: yyy }" 패턴
 cmd_advance() {
   local given_id=""
-  local no_spawn=0
+  local no_spawn="${HARNESS_NO_SPAWN:-0}"
   local outcome=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --no-spawn) no_spawn=1; shift ;;
+      --no-spawn) die "--no-spawn 플래그는 제거됨. 디버깅용으로 자동 spawn 끄려면 'HARNESS_NO_SPAWN=1 ./scripts/tasks.sh ...' 로 환경변수 사용." ;;
       --outcome)  outcome="$2"; shift 2 ;;
       -*) die "Unknown flag: $1" ;;
       *) given_id="$1"; shift ;;
@@ -550,10 +550,10 @@ cmd_spawn() {
 #   QA/reviewer 가 fail 판정했을 때 담당 역할(backend/frontend)로 돌리는 용도.
 cmd_rework() {
   local given_id="" to_role=""
-  local no_spawn=0
+  local no_spawn="${HARNESS_NO_SPAWN:-0}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --no-spawn) no_spawn=1; shift ;;
+      --no-spawn) die "--no-spawn 플래그는 제거됨. 디버깅용으로 자동 spawn 끄려면 'HARNESS_NO_SPAWN=1 ./scripts/tasks.sh ...' 로 환경변수 사용." ;;
       *)
         if [[ -z "$given_id" ]]; then given_id="$1"
         elif [[ -z "$to_role" ]]; then to_role="$1"

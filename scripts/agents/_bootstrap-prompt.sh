@@ -97,7 +97,7 @@ cat <<EOF
 
 ## 반드시 지킬 것
 
-- \`tasks.sh advance\` 를 **플래그 없이** 호출하세요. \`--no-spawn\` 은 사람 디버깅용이며 agent가 쓰면 역할 체인이 끊어집니다.
+- \`tasks.sh advance\` 를 **그대로** 호출하세요 (--no-spawn 같은 플래그 금지 — 거부됨).
 - qa/reviewer 역할은 \`advance\` 시 \`--outcome succeeded\` 또는 \`--outcome failed\` 필수.
 - 작업 결과물을 반드시 커밋한 뒤 \`advance\` 하세요. uncommitted 상태에서 advance 하면 다음 역할이 변경을 못 봅니다.
 - 세션 자체 종료는 agent CLI 가 자동으로 처리. shell 을 수동으로 \`exit\` 할 필요 없음.
