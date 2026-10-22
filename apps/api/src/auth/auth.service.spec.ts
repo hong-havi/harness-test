@@ -1,9 +1,23 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
 import { MemberEntity } from '../members/member.entity';
+
+function makeDupError(key: string): QueryFailedError {
+  const err = new QueryFailedError(
+    'INSERT',
+    [],
+    new Error(
+      `ER_DUP_ENTRY: Duplicate entry 'x' for key 'members.${key}'`,
+    ),
+  );
+  (err as unknown as { code: string }).code = 'ER_DUP_ENTRY';
+  (err as unknown as { message: string }).message =
+    `ER_DUP_ENTRY: Duplicate entry 'x' for key 'members.${key}'`;
+  return err;
+}
 
 type Mocked<T> = { [K in keyof T]: jest.Mock };
 
@@ -74,6 +88,90 @@ describe('AuthService', () => {
           '1.1.1.1',
         ),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('join', () => {
+    it('creates member with nickname = userId on first attempt', async () => {
+      (repo.exists as jest.Mock).mockResolvedValueOnce(false);
+      (repo.save as jest.Mock).mockImplementation(async (data) => ({
+        id: '42',
+        ...data,
+      }));
+
+      const result = await service.join(
+        { userId: 'joiner01', password: 'Abcd1234' },
+        '10.1.2.3',
+      );
+
+      expect(result).toEqual({ id: '42', userId: 'joiner01', nickname: 'joiner01' });
+      const savedArg = (repo.save as jest.Mock).mock.calls[0][0];
+      expect(savedArg.nickname).toBe('joiner01');
+      expect(savedArg.createdIp).toBe('10.1.2.3');
+      expect(savedArg.passwordHash).not.toBe('Abcd1234');
+      expect(savedArg.passwordHash.startsWith('$2')).toBe(true);
+    });
+
+    it('throws 409 when user_id already exists (pre-check)', async () => {
+      (repo.exists as jest.Mock).mockResolvedValueOnce(true);
+      await expect(
+        service.join({ userId: 'dup', password: 'Abcd1234' }, '1.1.1.1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('retries with suffix on nickname collision then succeeds', async () => {
+      (repo.exists as jest.Mock).mockResolvedValueOnce(false);
+      (repo.save as jest.Mock)
+        .mockRejectedValueOnce(makeDupError('uk_members_nickname'))
+        .mockImplementationOnce(async (data) => ({ id: '7', ...data }));
+
+      const result = await service.join(
+        { userId: 'joiner01', password: 'Abcd1234' },
+        '1.1.1.1',
+      );
+
+      expect(result.userId).toBe('joiner01');
+      expect(result.nickname).toMatch(/^joiner01-[0-9a-f]{4}$/);
+      expect((repo.save as jest.Mock).mock.calls.length).toBe(2);
+    });
+
+    it('maps race-condition user_id duplicate to 409', async () => {
+      (repo.exists as jest.Mock).mockResolvedValueOnce(false);
+      (repo.save as jest.Mock).mockRejectedValueOnce(
+        makeDupError('uk_members_user_id'),
+      );
+      await expect(
+        service.join({ userId: 'joiner01', password: 'Abcd1234' }, '1.1.1.1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('throws 409 when nickname cannot be generated after max attempts', async () => {
+      (repo.exists as jest.Mock).mockResolvedValueOnce(false);
+      (repo.save as jest.Mock).mockRejectedValue(
+        makeDupError('uk_members_nickname'),
+      );
+      await expect(
+        service.join({ userId: 'joiner01', password: 'Abcd1234' }, '1.1.1.1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect((repo.save as jest.Mock).mock.calls.length).toBe(5);
+    });
+
+    it('truncates long userId to fit 32-char nickname limit', async () => {
+      (repo.exists as jest.Mock).mockResolvedValueOnce(false);
+      (repo.save as jest.Mock).mockImplementation(async (data) => ({
+        id: '1',
+        ...data,
+      }));
+      const longId = 'a'.repeat(32);
+
+      const result = await service.join(
+        { userId: longId, password: 'Abcd1234' },
+        '1.1.1.1',
+      );
+
+      expect(result.nickname.length).toBeLessThanOrEqual(32);
+      expect(result.nickname).toBe(longId);
     });
   });
 
