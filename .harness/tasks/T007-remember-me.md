@@ -22,7 +22,7 @@ ports:
 compose_project: harness_t007
 figma_url: null
 blocked_by: []
-related_prd: []
+related_prd: ["§3.2 F-M2 로그인", "§3.3 JWT 정책"]
 priority: normal          # high | normal | low
 created_at: 2026-10-22
 updated_at: 2026-10-22
@@ -78,24 +78,74 @@ _(T007 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 # T007 — remember-me
 
 ## Plan
-<planner 작성>
 
 ### Why
-<사용자 가치 또는 기술적 이유>
+현재 로그인 쿠키는 `Max-Age=3600` (1시간) 세션으로 신뢰 기기에서도 매일 수차례 재로그인이 필요하다. "로그인 상태 유지" 체크박스로 쿠키 Max-Age 와 JWT 만료를 조건부로 연장해 신뢰 기기의 편의성(7일)과 공용 기기의 보안(세션 쿠키)을 둘 다 지원한다.
 
 ### What
-<결과물 기준 — 무엇을 바꾸는가>
+- `/login` 폼에 "로그인 상태 유지" 체크박스 추가 (기본 미체크, 재로그인 시에도 매번 미체크 — localStorage 저장 안 함).
+- `POST /auth/login` 요청 바디에 `rememberMe?: boolean` optional 필드 추가.
+- `rememberMe === true` → access_token/csrf_token 쿠키 `Max-Age=604800` (7일) + **JWT `expiresIn` 도 7일로 동일 연장**.
+- `rememberMe !== true` → 세션 쿠키 (`Max-Age` 미설정) + JWT 만료 기존 1시간 유지.
+- 쿠키 그 외 속성(HttpOnly, Secure, SameSite=Lax, Path=/) 변경 없음.
 
 ### Scope
-- 포함: ...
-- 제외: ...
+
+**포함**
+- `apps/api` `LoginDto` 에 optional `rememberMe: boolean` 필드 (class-validator `@IsBoolean() @IsOptional()`).
+- `apps/api` `AuthService.login` — rememberMe 분기로 `expiresIn` 결정, `LoginResult.maxAgeSeconds` 는 쿠키 Max-Age 제어용 (0 이면 session cookie 로 해석).
+- `apps/api` `AuthController.login` — `maxAgeSeconds === 0` 일 때 cookie `maxAge` 생략 (session cookie), 아니면 ms 변환해서 설정. `csrf_token` 쿠키도 동일 만료 적용.
+- `apps/web` `/login` 페이지 — `<input type="checkbox" id="rememberMe">` + state + 폼 submit 에 전달.
+- `apps/web/lib/types.ts` `LoginInput` 에 `rememberMe?: boolean` 추가.
+- `apps/web/lib/api.ts` `login()` 가 body 로 그대로 전달 (이미 `...input` 패턴).
+- Unit test (`apps/api/src/auth/auth.service.spec.ts`): rememberMe=true/false/undefined 3 케이스 — `maxAgeSeconds` 와 JWT 서명 `expiresIn` 검증.
+
+**제외**
+- Refresh token 도입. JWT 만료 뒤 자동 재발급 없음 (PRD §3.3 Refresh 범위 밖 유지).
+- "Remember my email", biometric 자동 로그인, 모바일 전용 처리.
+- localStorage 로 체크박스 선택값 persist (매번 미체크).
+- `logout` 동작 — 기존 그대로 (Max-Age=0 로 즉시 만료).
+- 신규 환경변수 추가. 7일(=604800초) 은 서버 상수로 하드코딩.
 
 ### Acceptance
-- [ ] <측정 가능한 수용 기준>
-- [ ] ...
+
+**UI (`/login`)**
+- [ ] `/login` 페이지에 label "로그인 상태 유지" 와 `type="checkbox"` 입력이 렌더링되고, 초기 상태는 unchecked.
+- [ ] 체크박스는 `?signup=1`, `?joined=1`, 에러 상태와 무관하게 노출된다.
+- [ ] 로그인 submit 요청 바디에 `rememberMe` (boolean) 필드가 포함된다 (DevTools Network 확인).
+
+**API 쿠키 동작**
+- [ ] `POST /auth/login` 바디 `rememberMe: true` 로 요청 → 응답 `Set-Cookie: access_token=...; Max-Age=604800; HttpOnly; SameSite=Lax; Path=/` 과 동일 Max-Age 의 `csrf_token` 쿠키 2개.
+- [ ] `POST /auth/login` 바디 `rememberMe: false` (또는 미전송) → 응답 `Set-Cookie` 에 `Max-Age`/`Expires` 속성 **없음** (세션 쿠키).
+- [ ] 두 경우 모두 `HttpOnly` (access_token), `SameSite=Lax`, `Path=/` 속성은 유지.
+
+**JWT 만료**
+- [ ] `rememberMe: true` 로 로그인 → 응답 쿠키의 JWT payload `exp - iat === 604800`.
+- [ ] `rememberMe: false|undefined` 로 로그인 → `exp - iat === 3600` (환경변수 `JWT_EXPIRES_IN` 기본 또는 설정값, 현재 코드와 동일).
+
+**DTO/검증**
+- [ ] `LoginDto` 가 `rememberMe` 로 non-boolean (문자열 "yes" 등) 을 받으면 400 Bad Request.
+- [ ] `rememberMe` 미전송 (기존 호출자) → 200 OK, 세션 쿠키 경로로 처리 (회귀 없음).
+
+**회귀**
+- [ ] 기존 e2e: signup → login (rememberMe 미전송) → `GET /members/me` 200 OK 통과.
+- [ ] `AuthService.spec.ts` 기존 테스트 전부 통과 + rememberMe 3 케이스 신규 추가 통과.
 
 ### Files touched (예상)
-- `apps/.../...`
+
+**Backend (`apps/api`)**
+- `src/auth/dto/login.dto.ts` — `rememberMe?: boolean` + `@IsBoolean() @IsOptional()`
+- `src/auth/auth.service.ts` — `login` 에 rememberMe 분기, `LoginResult.maxAgeSeconds` 를 쿠키 Max-Age 전달 매개로 재해석 (0 = session cookie)
+- `src/auth/auth.controller.ts` — `cookieOptions` 가 `maxAgeMs === 0` 이면 `maxAge` 를 넘기지 않도록 (express `res.cookie` 는 maxAge 생략 시 session cookie)
+- `src/auth/auth.service.spec.ts` — rememberMe=true/false/undefined unit test 추가
+
+**Frontend (`apps/web`)**
+- `app/login/page.tsx` — `rememberMe` state + checkbox 필드 + `api.login` 호출에 전달
+- `lib/types.ts` — `LoginInput.rememberMe?: boolean`
+- `lib/api.ts` — 변경 없음 (body 를 그대로 spread 중)
+
+**관련 PRD**
+- §3.2 F-M2 (로그인), §3.3 JWT 정책 — "Access Token 1시간" 은 rememberMe=false 기본값으로 유지되나 rememberMe=true 분기만 7일로 연장. PRD 본문 수정 없음 (범위 내 조건부 확장). 필요 시 architect 단계에서 PRD 보조 각주 검토.
 
 ---
 
