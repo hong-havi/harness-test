@@ -12,9 +12,13 @@ import * as bcrypt from 'bcrypt';
 import { MemberEntity } from '../members/member.entity';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
+import { JoinDto } from './dto/join.dto';
 
 const BCRYPT_SALT_ROUNDS = 10;
 const DUP_ENTRY_CODE = 'ER_DUP_ENTRY';
+const NICKNAME_MAX_LENGTH = 32;
+const NICKNAME_SUFFIX_LENGTH = 4;
+const NICKNAME_MAX_ATTEMPTS = 5;
 // bcrypt.hashSync('placeholder', 10) 로 생성한 valid 포맷 더미.
 // 사용자가 없을 때도 bcrypt.compare 를 호출해 타이밍 차이를 줄인다.
 const DUMMY_BCRYPT_HASH =
@@ -74,6 +78,72 @@ export class AuthService {
       }
       throw e;
     }
+  }
+
+  async join(dto: JoinDto, ip: string): Promise<PublicMember> {
+    const userIdDup = await this.membersRepo.exists({
+      where: { userId: dto.userId },
+    });
+    if (userIdDup) {
+      throw new ConflictException('이미 사용 중인 아이디입니다.');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_SALT_ROUNDS);
+
+    // 닉네임 자동 생성: user_id 1차 시도 → 충돌 시 짧은 랜덤 접미사 재시도
+    // UNIQUE 제약은 DB 레벨에서 걸려있으므로, 선검사 + save 에러 catch 를 모두 처리.
+    let lastError: unknown;
+    for (let attempt = 0; attempt < NICKNAME_MAX_ATTEMPTS; attempt++) {
+      const nickname =
+        attempt === 0
+          ? this.truncateNickname(dto.userId)
+          : this.buildNicknameWithSuffix(dto.userId);
+      try {
+        const saved = await this.membersRepo.save(
+          this.membersRepo.create({
+            userId: dto.userId,
+            nickname,
+            passwordHash,
+            createdIp: ip,
+          }),
+        );
+        return {
+          id: String(saved.id),
+          userId: saved.userId,
+          nickname: saved.nickname,
+        };
+      } catch (e) {
+        if (this.isDuplicateKey(e)) {
+          const key = this.extractDupKey(e);
+          if (key === 'uk_members_user_id' || key === 'user_id') {
+            throw new ConflictException('이미 사용 중인 아이디입니다.');
+          }
+          // nickname 충돌 — 다음 접미사로 재시도
+          lastError = e;
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw new ConflictException(
+      '닉네임 자동 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.',
+    );
+  }
+
+  private truncateNickname(base: string): string {
+    return base.length > NICKNAME_MAX_LENGTH
+      ? base.slice(0, NICKNAME_MAX_LENGTH)
+      : base;
+  }
+
+  private buildNicknameWithSuffix(base: string): string {
+    const suffix = randomBytes(NICKNAME_SUFFIX_LENGTH)
+      .toString('hex')
+      .slice(0, NICKNAME_SUFFIX_LENGTH);
+    const reserved = suffix.length + 1; // '-' + suffix
+    const headMax = NICKNAME_MAX_LENGTH - reserved;
+    const head = base.length > headMax ? base.slice(0, headMax) : base;
+    return `${head}-${suffix}`;
   }
 
   async login(dto: LoginDto): Promise<LoginResult> {

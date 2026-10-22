@@ -11,6 +11,7 @@ import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
+import { JoinDto } from './dto/join.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 const COOKIE_PATH = '/';
@@ -32,6 +33,11 @@ export class AuthController {
   @Post('signup')
   async signup(@Body() dto: SignupDto, @Req() req: Request) {
     return this.authService.signup(dto, req.ip ?? '0.0.0.0');
+  }
+
+  @Post('join')
+  async join(@Body() dto: JoinDto, @Req() req: Request) {
+    return this.authService.join(dto, req.ip ?? '0.0.0.0');
   }
 
   @Post('login')
