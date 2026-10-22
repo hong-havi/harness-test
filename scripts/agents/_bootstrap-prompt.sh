@@ -35,15 +35,38 @@ cat <<EOF
    ${TASK_ID} [${AGENT_NAME}]: <동사형 요약>
    \`\`\`
 
-2. 완료 메시지를 chat log 에 기록:
+2. **완료 리포트**를 chat log 에 기록 (Slack 스레드에 자동 미러됨). **반드시 아래 포맷 유지**:
    \`\`\`
-   ./scripts/chat.sh append ${TASK_ID} ${ROLE} coordinator deliver "<작업 요약 1~2줄>"
+   ./scripts/chat.sh append ${TASK_ID} ${ROLE} coordinator deliver "<multiline-report>"
    \`\`\`
+
+   리포트 포맷 (한 메시지 안에 전부, markdown):
+   \`\`\`
+   ✅ ${ROLE} 작업 완료 (task ${TASK_ID})
+
+   ## 요약
+   • <한 줄 요약 1>
+   • <한 줄 요약 2>
+
+   ## 변경/생성 파일
+   • \`path/to/file1.ts\` — 설명
+   • \`path/to/file2.md\` — 설명 (task.md 섹션명도 포함: \"## Design\")
+
+   ## 다음 역할 참고
+   • <다음 역할이 알아둘 결정/제약 1>
+   • <...>
+
+   ## 커밋
+   • \`<sha>\` <동사형 요약> (여러 개면 리스트)
+   \`\`\`
+
+   요약은 간결하게 (각 bullet 1~2줄). 파일 경로는 **실제 작성/수정한 모든 것** 나열 (task.md 섹션도 "파일: .harness/tasks/${TASK_ID}-\<slug\>.md 의 ## XXX 섹션" 식으로).
 
 3. 다음 역할로 커서를 넘깁니다. **자동으로 다음 agent 세션이 spawn 됩니다**:
    \`\`\`
    ./scripts/tasks.sh advance
    \`\`\`
+   (qa/reviewer 역할이면 \`--outcome succeeded\` 또는 \`--outcome failed\` 필수)
 
 4. 이 세션 종료.
 
