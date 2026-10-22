@@ -20,6 +20,9 @@ export class MemberEntity {
   @Column({ name: 'nickname', type: 'varchar', length: 32, unique: true })
   nickname!: string;
 
+  @Column({ name: 'email', type: 'varchar', length: 254, nullable: true })
+  email!: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'datetime' })
   createdAt!: Date;
 
