@@ -312,25 +312,25 @@ curl -i -X POST http://localhost:4030/auth/join \
 ---
 
 ## Review notes
-<reviewer 작성>
 
 ### 결과
-- 결정: pass | rework
+- 결정: **pass**
 - 일자: 2026-10-22
-- 병합 SHA: <sha> (pass 시)
+- 병합 SHA: <merge 시 기록>
 
 ### Blocker
-- 없음 또는
-- `file.ts:42` — <문제>, <수정 가이드>
+- 없음
 
 ### Suggest
-- `file.ts:88` — <개선 아이디어>
+- `apps/api/src/auth/auth.service.ts:95,122` — `lastError` 변수가 쓰기 전용(assign만 하고 read 없음). 최종 `ConflictException` 메시지에 포함하거나, 삭제하는 편이 깔끔. 현 동작은 정상.
+- `apps/api/src/auth/auth.service.ts:140-142` — `randomBytes(4).toString('hex')` 는 8 hex 문자인데 다시 `slice(0, 4)` 로 자르므로 실제 엔트로피는 16-bit (≈65k). 재시도 5회라 실 충돌 가능성은 낮지만, `randomBytes(2).toString('hex')` 로 쓰면 의도가 더 명확.
+- 브랜치가 `main` 대비 4개 커밋 뒤처져 있음 (harness Phase 3 — scripts/, qa role doc). 병합 전 `git rebase origin/main` 필요. 변경 영역 겹침 없음 → clean rebase 예상.
 
 ### 체크리스트 요약
-- PRD 정합성: ✅
-- 보안: ✅
-- 리소스/누수: ✅
-- 성능/데이터: ✅
-- 코드 품질: ✅
-- 테스트: ✅
-- 범위: ✅
+- PRD 정합성: ✅ — F-M1 가입(§3.2), §3.1 members 스키마 재사용, §5.1 API 계약 준수, 자동 로그인 금지 준수
+- 보안: ✅ — bcrypt(10), 응답 바디에 passwordHash 미노출, DTO class-validator 재검증, 가입 라우트 쿠키 미발급, 에러 메시지 민감정보 없음, 평문 SQL/HTML 삽입 없음
+- 리소스/누수: ✅ — bounded loop(최대 5회), 모든 await 처리, dangling promise 없음
+- 성능/데이터: ✅ — `members.user_id` 는 UNIQUE 인덱스 커버, N+1 없음, 스키마 변경 없음(마이그레이션 불필요)
+- 코드 품질: ✅ — 단일 책임, 상수화된 매직넘버, YAGNI, 미사용 import 없음, console.log 없음, 커밋 메시지 `T### [claude]:` 포맷 준수
+- 테스트: ✅ — AuthService.join 6개 유닛(happy / pre-check 409 / nickname collision retry / user_id race 409 / max-attempts 소진 / 32자 truncation), QA v2 docker compose E2E 전수 통과
+- 범위: ✅ — `/signup` · 기존 auth 코드 미변경, 디자인 범위 밖 수정 없음
