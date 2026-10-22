@@ -102,21 +102,49 @@ cat <<EOF
 - 작업 결과물을 반드시 커밋한 뒤 \`advance\` 하세요. uncommitted 상태에서 advance 하면 다음 역할이 변경을 못 봅니다.
 - 세션 자체 종료는 agent CLI 가 자동으로 처리. shell 을 수동으로 \`exit\` 할 필요 없음.
 
-## 사용자에게 질문해야 할 때 (중요)
+## 사용자에게 질문해야 할 때 (중요 — 반드시 따를 것)
 
 PRD 모호, 결정 필요, 추가 데이터 요청 등 user 답이 필요한 경우:
 
+### ❌ 절대 하지 말 것
+
+- **CLI 의 기본 선택지/프롬프트 다이얼로그**(numbered choice, "Chat about this", confirmation prompt 등) 사용 금지.
+  - claude code 의 선택지 창 (\"1. ... 2. ... 3. Type something\") 금지
+  - interactive input prompt 금지
+- 이유: **user 는 Slack 에서만 답**합니다. TUI 질문은 Slack 으로 안 가서 user 가 못 보고 무한 대기 됨.
+
+### ✅ 반드시 할 것
+
 1. **질문을 chat log 에 \`question\` 타입으로 append**:
    \`\`\`
-   ./scripts/chat.sh append ${TASK_ID} ${ROLE} user question "<구체적인 질문 1개>"
+   ./scripts/chat.sh append ${TASK_ID} ${ROLE} user question "<구체적인 질문 — 선택지가 있으면 질문문 안에 '옵션 A/B/C' 로 명시>"
    \`\`\`
    이 메시지는 자동으로 Slack 스레드에 미러됩니다.
 
-2. **답을 기다립니다**. 사용자가 Slack 스레드에 reply 하면 Coordinator 가 당신의 터미널에 자동 주입합니다 (일반 입력처럼 받음).
+2. 여러 결정이 필요하면 **하나의 chat.sh question 호출에 번호 매겨 다 묶어 전송** (Q1/Q2/Q3) — 여러 번 보내지 말 것.
 
-3. 질문 하나당 user 답변 하나 — 여러 질문은 분리해서 보내거나 하나로 묶어 보내세요.
+3. **답을 기다립니다**. 사용자가 Slack 스레드에 reply 하면 Coordinator 가 당신의 터미널에 자동 주입합니다. 그러면 일반 agent 응답으로 받고 작업 재개.
 
-4. 답을 받기 전까지는 진행하지 말고 대기. 터미널 응답 대기 상태를 유지하세요.
+4. 답 받기 전까지는 진행 금지. 선택지를 TUI 로 띄우지 말고 chat.sh 호출 후 **그냥 대기**.
 
-지침 외 결정을 임의로 하지 말고, 모호함은 반드시 질문으로 해소.
+### 선택지 질문 예시
+
+❌ TUI 선택지:
+\`\`\`
+1. 옵션 A
+2. 옵션 B
+3. Type something
+\`\`\`
+
+✅ chat.sh question:
+\`\`\`
+./scripts/chat.sh append ${TASK_ID} ${ROLE} user question "rememberMe=true 일 때 JWT Access Token 만료는?
+A. 쿠키·JWT 모두 7일 (recommended)
+B. 쿠키만 7일, JWT 는 1시간 유지 (만료 시 재로그인)
+C. 다른 안이 있다면 설명
+
+선택 하나 또는 자유 설명으로 답해주세요."
+\`\`\`
+
+지침 외 결정을 임의로 하지 말고, 모호함은 반드시 chat.sh question 으로 user 에게.
 EOF
