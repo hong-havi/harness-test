@@ -40,24 +40,59 @@ _(T009 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 # T009 — add-email
 
 ## Plan
-<planner 작성>
 
 ### Why
-<사용자 가치 또는 기술적 이유>
+PRD의 회원 데이터 모델은 식별자로 `user_id`/`nickname`만 보유하여 추후 공지·계정복구 등 이메일 기반 커뮤니케이션이 불가하다. 본 작업은 이메일을 **수집·수정**할 수 있는 기반만 추가한다. 메일 발송·인증·중복 체크는 범위 밖(사용자 확정).
+
+> PRD 변경 사유: PRD §3.1 members 테이블에 `email` 컬럼 추가. 선택 입력, UNIQUE 없음, 254자 이하.
 
 ### What
-<결과물 기준 — 무엇을 바꾸는가>
+- `members.email` 컬럼 신규 추가 (nullable, UNIQUE 아님)
+- 회원가입 API/화면에서 이메일을 **선택 입력**으로 받음
+- 내 정보 조회(GET /me) 응답에 `email` 포함
+- 내 정보 수정(PATCH /me) 으로 이메일 수정/삭제 가능
+- 이메일 **포맷 검증**만 서버에서 수행 (class-validator `@IsEmail`), 메일 발송·확인 링크 없음
 
 ### Scope
-- 포함: ...
-- 제외: ...
+- 포함:
+  - `member.entity.ts`, 신규 TypeORM 마이그레이션 (up/down)
+  - `signup.dto.ts` (optional email 필드)
+  - `auth.service.ts` signup 분기 (email 저장)
+  - `update-me.dto.ts`, `members.service.ts`, `members.controller.ts` (GET/PATCH /me email)
+  - `apps/web/app/signup/page.tsx` 폼 필드 1개 추가
+  - `apps/web/app/me/page.tsx` 폼 필드 1개 추가 (수정 가능)
+  - `apps/web/lib/api.ts` 요청/응답 타입에 email 반영
+- 제외:
+  - 메일 발송 / 인증 링크 / 이메일로 로그인 / 비밀번호 찾기
+  - email 중복(UNIQUE) 체크
+  - 자동 로그인/세션 변경
+  - 로그인 폼 변경 (여전히 user_id 기반)
 
 ### Acceptance
-- [ ] <측정 가능한 수용 기준>
-- [ ] ...
+- [ ] DB `members` 테이블에 `email VARCHAR(254) NULL` 컬럼이 존재한다 (UNIQUE 인덱스 없음, 왕복 마이그레이션 성공)
+- [ ] `POST /auth/signup` 에서 `email` 생략 시 **201/200** 로 가입 성공, 저장된 레코드의 `email`은 `NULL`
+- [ ] `POST /auth/signup` 에서 유효한 email 포함 시 가입 성공, DB에 그 값이 저장됨
+- [ ] `POST /auth/signup` 에서 포맷 오류(e.g. `"not-an-email"`) 또는 254자 초과 → **400** 응답
+- [ ] email이 서로 다른 두 회원이 **같은 email**로 가입 가능 (중복 허용 확인)
+- [ ] `GET /me` 응답 바디에 `email` 필드가 포함되며, 저장값이 없으면 `null`
+- [ ] `PATCH /me` 로 email 신규 설정 / 변경 / `""`(또는 `null`) 전송으로 **삭제** 가능
+- [ ] 회원가입 화면 `/signup` 에 `이메일 (선택)` input 노출, 비워도 제출 가능하며 성공 시 `/login?signup=1` 로 이동
+- [ ] 내 정보 화면 `/me` 에 email 필드가 저장값으로 프리필, 수정·저장 가능
+- [ ] 기존 가입/로그인/글쓰기 플로우 회귀 없음 (QA가 UAT 로 확인)
 
 ### Files touched (예상)
-- `apps/.../...`
+- `apps/api/src/members/member.entity.ts`
+- `apps/api/src/migrations/<timestamp>-add-member-email.ts` (신규)
+- `apps/api/src/auth/dto/signup.dto.ts`
+- `apps/api/src/auth/auth.service.ts`
+- `apps/api/src/auth/auth.service.spec.ts`
+- `apps/api/src/members/dto/update-me.dto.ts`
+- `apps/api/src/members/members.service.ts`
+- `apps/api/src/members/members.controller.ts`
+- `apps/api/src/members/members.service.spec.ts`
+- `apps/web/app/signup/page.tsx`
+- `apps/web/app/me/page.tsx`
+- `apps/web/lib/api.ts`
 
 ---
 
