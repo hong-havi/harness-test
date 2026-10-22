@@ -4,7 +4,7 @@ title: add-email
 slug: add-email
 branch: task/T009-add-email
 worktree: .worktrees/T009-add-email
-status: planning          # planning | in-flight | paused | merged | dropped
+status: merged
 required_roles:
   - { role: planner,    agent: claude }
   - { role: architect,  agent: claude }
