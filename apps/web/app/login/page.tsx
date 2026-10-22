@@ -9,6 +9,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const justSignedUp = searchParams.get('signup') === '1';
+  const justJoined = searchParams.get('joined') === '1';
 
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
@@ -38,7 +39,7 @@ function LoginForm() {
       <h1>로그인</h1>
       <p className="subtitle">계정 정보를 입력하세요.</p>
 
-      {justSignedUp && !error && (
+      {(justSignedUp || justJoined) && !error && (
         <div className="alert alert--success" role="status">
           가입이 완료되었습니다. 로그인해 주세요.
         </div>

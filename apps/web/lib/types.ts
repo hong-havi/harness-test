@@ -30,6 +30,12 @@ export interface LoginInput {
   password: string;
 }
 
+/** POST /auth/join 요청 바디 (nickname 은 서버가 자동 생성) */
+export interface JoinInput {
+  userId: string;
+  password: string;
+}
+
 /**
  * PATCH /members/me 요청 바디.
  * 전부 optional, 최소 1개 필드. newPassword 제공 시 currentPassword 필수.

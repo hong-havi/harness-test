@@ -1,4 +1,5 @@
 import type {
+  JoinInput,
   LoginInput,
   MemberProfile,
   PublicMember,
@@ -105,6 +106,9 @@ function extractErrorMessage(data: unknown, status: number): string {
 export const api = {
   signup(input: SignupInput): Promise<PublicMember> {
     return request<PublicMember>('POST', '/auth/signup', { ...input });
+  },
+  join(input: JoinInput): Promise<PublicMember> {
+    return request<PublicMember>('POST', '/auth/join', { ...input });
   },
   login(input: LoginInput): Promise<PublicMember> {
     return request<PublicMember>('POST', '/auth/login', { ...input });
