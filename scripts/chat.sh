@@ -88,6 +88,57 @@ cmd_append() {
   slack_mirror "$id" "$from" "$to" "$type" "$msg" || true
 }
 
+# 메시지 포맷 — type 별로 user 친화적인 헤더 + body
+# role 명(from)을 메인으로 노출, type 별 이모지
+format_slack_body() {
+  local from="$1" to="$2" type="$3" msg="$4"
+  local header
+  case "$type" in
+    request)
+      header="📄 *User request*"
+      ;;
+    dispatch)
+      header="➡️ *Dispatch* → \`${to}\`"
+      ;;
+    deliver)
+      # from role 을 capitalize 해서 완료 리포트로
+      local rcap="$(echo "${from:0:1}" | tr '[:lower:]' '[:upper:]')${from:1}"
+      case "$from" in
+        planner)   header="📝 *${rcap}* 완료" ;;
+        architect) header="🏗️ *${rcap}* 완료" ;;
+        designer)  header="🎨 *${rcap}* 완료" ;;
+        backend)   header="💻 *${rcap}* 완료" ;;
+        frontend)  header="🖥️ *${rcap}* 완료" ;;
+        qa)        header="🧪 *${rcap}* 완료" ;;
+        reviewer)  header="🔎 *${rcap}* 리뷰 완료" ;;
+        *)         header="✅ *${rcap}* 완료" ;;
+      esac
+      ;;
+    handoff)
+      header="🔄 \`${from}\` → \`${to}\`"
+      ;;
+    question)
+      header="❓ *질문* — \`${from}\` → \`${to}\` (답을 이 스레드에 reply)"
+      ;;
+    answer)
+      header="💬 *${from}* 답변"
+      ;;
+    report)
+      header="📊 *리포트*"
+      ;;
+    error)
+      header="⚠️ *에러* — \`${from}\`"
+      ;;
+    note)
+      header="ℹ️ _${from}_"
+      ;;
+    *)
+      header="\`${from}\` → \`${to}\` (${type})"
+      ;;
+  esac
+  printf '%s\n%s\n' "$header" "$msg"
+}
+
 # task 당 1 Slack thread. thread_ts 를 .harness/chat/<id>.slack 에 저장.
 # 첫 메시지는 채널 최상위에, 이후는 thread reply.
 slack_mirror() {
@@ -98,14 +149,14 @@ slack_mirror() {
   local thread_ts=""
   [[ -f "$thread_file" ]] && thread_ts="$(cat "$thread_file")"
 
-  # 메시지 포맷: [from → to] (type)\n body
-  local body="*[\`${from}\` → \`${to}\`]* (${type})
-${msg}"
+  local body
+  body="$(format_slack_body "$from" "$to" "$type" "$msg")"
 
   local new_ts
   if [[ -z "$thread_ts" ]]; then
     # 첫 메시지 — 채널 최상위에 task 헤더 포스트
-    local header="📋 *${id}* 시작 ($(date -u +%Y-%m-%dT%H:%M:%SZ))
+    local header="📋 *${id}* 시작
+
 ${body}"
     new_ts="$("$SCRIPT_DIR/slack/send.sh" --text "$header" 2>/dev/null)" || return 0
     [[ -n "$new_ts" ]] || return 0

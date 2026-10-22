@@ -75,19 +75,17 @@ cat <<EOF
    ./scripts/tasks.sh rework ${TASK_ID} <원담당역할>   # 1개 이상 fail
    \`\`\`
 
-   **reviewer 역할** (**중요** — 다른 역할과 다름):
-   체크리스트 통과 + "approve for merge" 커밋 직후, **반드시** 다음을 호출:
-   \`\`\`
-   ./scripts/tasks.sh merge
-   \`\`\`
-   \`advance\` 가 아닙니다. \`merge\` 가 자동으로:
-   - rebase main
-   - ff-only merge
-   - worktree + 브랜치 cleanup
-   - task.md/chat/handles → archive
-   를 수행합니다. **merge 호출을 생략하지 마세요** — coordinator 는 reviewer 의 수동 merge 를 기다립니다.
+   **reviewer 역할** (**중요** — 다른 역할과 완전히 다름. merge 자동 호출 금지):
 
-   Blocker 있어 pass 못 하는 경우: \`./scripts/tasks.sh rework ${TASK_ID} <원담당역할>\` (merge 금지).
+   체크리스트 통과 + "approve for merge" 커밋 후:
+   1. \`chat.sh append ${TASK_ID} reviewer user question "..."\` 으로 **사용자에게 배포 승인 요청** (merge 자동 호출 금지)
+      메시지에 포함: 변경 요약, 변경 파일 수, 체크리스트 결과, "📦 merge 할까요? 답: merge / no"
+   2. **대기**. 사용자가 Slack 스레드에 답하면 터미널에 자동 주입됨.
+   3. 사용자 답에 따라:
+      - **merge / yes / 배포 / ok** → \`./scripts/tasks.sh merge\` 호출 (자동 cleanup)
+      - **no / 수정 / rework** → \`./scripts/tasks.sh rework ${TASK_ID} <원담당역할>\` 호출
+      - 애매하면 chat.sh question 으로 재질의
+   Blocker 발견 시(코드 자체 문제) → 사용자 승인 대기 없이 바로 \`rework\` (품질 결정).
 
 4. 이 세션 종료.
 
