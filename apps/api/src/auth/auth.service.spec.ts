@@ -70,6 +70,48 @@ describe('AuthService', () => {
       expect(savedArg.passwordHash.startsWith('$2')).toBe(true);
     });
 
+    it('stores email=null when email omitted', async () => {
+      (repo.exists as jest.Mock).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+      (repo.save as jest.Mock).mockResolvedValue({
+        id: '1',
+        userId: 'alice01',
+        nickname: 'alice',
+      });
+
+      const result = await service.signup(
+        { userId: 'alice01', password: 'password12', nickname: 'alice' },
+        '10.1.2.3',
+      );
+
+      const savedArg = (repo.save as jest.Mock).mock.calls[0][0];
+      expect(savedArg.email).toBeNull();
+      expect(result).not.toHaveProperty('email');
+    });
+
+    it('stores email when provided (email not echoed in public view)', async () => {
+      (repo.exists as jest.Mock).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+      (repo.save as jest.Mock).mockResolvedValue({
+        id: '1',
+        userId: 'alice01',
+        nickname: 'alice',
+      });
+
+      const result = await service.signup(
+        {
+          userId: 'alice01',
+          password: 'password12',
+          nickname: 'alice',
+          email: 'alice@example.com',
+        },
+        '10.1.2.3',
+      );
+
+      const savedArg = (repo.save as jest.Mock).mock.calls[0][0];
+      expect(savedArg.email).toBe('alice@example.com');
+      expect(result).toEqual({ id: '1', userId: 'alice01', nickname: 'alice' });
+      expect(result).not.toHaveProperty('email');
+    });
+
     it('throws 409 when user_id exists', async () => {
       (repo.exists as jest.Mock).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
       await expect(

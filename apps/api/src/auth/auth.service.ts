@@ -65,6 +65,7 @@ export class AuthService {
         this.membersRepo.create({
           userId: dto.userId,
           nickname: dto.nickname,
+          email: dto.email ?? null,
           passwordHash,
           createdIp: ip,
         }),

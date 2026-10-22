@@ -1,4 +1,12 @@
-import { IsString, Length, Matches, MaxLength, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class SignupDto {
   @IsString()
@@ -17,4 +25,10 @@ export class SignupDto {
   @IsString()
   @Length(2, 32)
   nickname!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(254, { message: 'email은 254자 이하여야 합니다.' })
+  @IsEmail({}, { message: 'email 형식이 올바르지 않습니다.' })
+  email?: string;
 }
