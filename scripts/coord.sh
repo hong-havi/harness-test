@@ -108,8 +108,9 @@ handle_command() {
     "help")
       reply "📘 *하네스 Coordinator 명령*
 \`new <slug>\` — 새 task 생성 (planner 자동 spawn)
-\`advance <task-id>\` — 다음 역할로
+\`advance <task-id>\` — 다음 역할로 (커밋 유무로 추론)
 \`advance <task-id> succeeded|failed\` — qa/reviewer outcome 명시
+\`rework <task-id> <role>\` — 지정 역할로 되돌리고 재 spawn (fail 복구용)
 \`status\` — 활성 task 목록
 \`help\` — 이 안내"
       ;;
@@ -157,6 +158,26 @@ $(echo "$out" | tail -15)
         log_decision "task_advanced" "$tid ${outcome:-auto}"
       else
         reply "❌ advance 실패:
+\`\`\`
+$out
+\`\`\`"
+      fi
+      ;;
+    "rework "*)
+      local args="${cmd#rework }"
+      local tid trole
+      tid="$(echo "$args" | awk '{print $1}')"
+      trole="$(echo "$args" | awk '{print $2}')"
+      [[ -n "$tid" && -n "$trole" ]] || { reply "⚠ 사용법: \`rework <task-id> <role>\` (예: \`rework T003 frontend\`)"; return; }
+      local out
+      if out="$("$SCRIPT_DIR/tasks.sh" rework "$tid" "$trole" 2>&1)"; then
+        reply "🔄 *rework $tid → $trole*
+\`\`\`
+$(echo "$out" | tail -15)
+\`\`\`"
+        log_decision "task_rework" "$tid → $trole"
+      else
+        reply "❌ rework 실패:
 \`\`\`
 $out
 \`\`\`"

@@ -55,6 +55,9 @@ Commands:
   advance [task-id] [--no-spawn] [--outcome succeeded|failed]
                                 Move current_role to next, auto-spawn 다음 agent.
                                 qa/reviewer 는 --outcome 필수, 그 외는 커밋 유무로 추론.
+                                --outcome failed 는 커서 이동 안 함 (rework 필요).
+  rework <task-id> <role>       current_role 을 지정 역할로 되돌리고 그 agent 재 spawn.
+                                QA/reviewer fail 판정 후 담당 역할(backend/frontend)로.
   merge [task-id]               Rebase + ff-only merge to main + cleanup
   drop [task-id]                Archive and remove worktree/branch
   show [task-id]                Print task summary
@@ -388,7 +391,17 @@ cmd_advance() {
     return 0
   fi
 
-  # frontmatter 의 current_role 교체
+  # outcome=failed 면 다음으로 넘기지 않고 현재 role 유지 (rework 로 돌아가야 함)
+  if [[ "$outcome" == "failed" ]]; then
+    info "$id: $current → outcome=failed. 커서 이동 안 함. 'rework' 로 이전 역할에 돌리거나 수정 후 재advance 하세요."
+    "$SCRIPT_DIR/chat.sh" append "$id" "$current" coordinator handoff "$current FAILED — 다음 역할로 넘기지 않음. rework 필요." >/dev/null
+    local hist_file="$CHAT_DIR/${id}.role-history.jsonl"
+    mkdir -p "$CHAT_DIR"
+    echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"$current\",\"outcome\":\"failed\",\"next\":null}" >> "$hist_file"
+    return 0
+  fi
+
+  # frontmatter 의 current_role 교체 (succeeded 또는 추론 성공일 때만)
   sed -i.bak "s|^current_role: .*|current_role: $next|" "$f"
   rm -f "${f}.bak"
   info "$id: current_role $current → $next (outcome: ${outcome:-n/a})"
@@ -428,6 +441,60 @@ cmd_spawn() {
   id="$(resolve_task_id "${1:-}")"
   local role="${2:-}"
   "$SCRIPT_DIR/orca/spawn.sh" "$id" "$role"
+}
+
+# rework: current_role 을 지정 역할로 되돌리고 그 agent 를 재 spawn.
+#   QA/reviewer 가 fail 판정했을 때 담당 역할(backend/frontend)로 돌리는 용도.
+cmd_rework() {
+  local given_id="" to_role=""
+  local no_spawn=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-spawn) no_spawn=1; shift ;;
+      *)
+        if [[ -z "$given_id" ]]; then given_id="$1"
+        elif [[ -z "$to_role" ]]; then to_role="$1"
+        else die "unexpected arg: $1"; fi
+        shift ;;
+    esac
+  done
+  local id
+  id="$(resolve_task_id "$given_id")"
+  [[ -n "$to_role" ]] || die "rework 할 역할 지정 필요. 예: tasks.sh rework T003 frontend"
+  local f
+  f="$(live_task_file "$id")"
+  if [[ "$f" == "$(task_file "$id")" ]]; then
+    die "worktree 의 live task.md 를 찾지 못함: $id"
+  fi
+  local current
+  current="$(get_fm "$f" "current_role")"
+
+  # 이전 역할 터미널 close
+  local handles_file="$CHAT_DIR/${id}.handles"
+  if [[ -f "$handles_file" ]]; then
+    local prev_handle
+    prev_handle=$(tail -1 "$handles_file" | awk -F'"handle":"' '{print $2}' | awk -F'"' '{print $1}')
+    if [[ -n "$prev_handle" ]]; then
+      info "이전 역할 ($current) 터미널 close: $prev_handle"
+      orca terminal close --terminal "$prev_handle" --json >/dev/null 2>&1 || true
+    fi
+  fi
+
+  sed -i.bak "s|^current_role: .*|current_role: $to_role|" "$f"
+  rm -f "${f}.bak"
+  info "$id: rework — current_role $current → $to_role"
+  "$SCRIPT_DIR/chat.sh" append "$id" "$current" "$to_role" handoff "rework: $current → $to_role (수정 작업 요청)" >/dev/null
+
+  local hist_file="$CHAT_DIR/${id}.role-history.jsonl"
+  mkdir -p "$CHAT_DIR"
+  echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"$current\",\"outcome\":\"rework\",\"next\":\"$to_role\"}" >> "$hist_file"
+
+  if [[ $no_spawn -eq 1 ]]; then
+    info "(--no-spawn: $to_role agent 는 수동으로 spawn 하세요)"
+  else
+    info "$to_role agent 재 spawn..."
+    "$SCRIPT_DIR/orca/spawn.sh" "$id" "$to_role"
+  fi
 }
 
 cmd_merge() {
@@ -566,6 +633,7 @@ case "$cmd" in
   new)      cmd_new "$@" ;;
   list)     cmd_list "$@" ;;
   advance)  cmd_advance "$@" ;;
+  rework)   cmd_rework "$@" ;;
   merge)    cmd_merge "$@" ;;
   drop)     cmd_drop "$@" ;;
   show)     cmd_show "$@" ;;
