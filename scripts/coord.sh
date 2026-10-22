@@ -60,14 +60,14 @@ state_get() {
   # STATE 와 KEY 를 env 로 전달 (bash 가 msys /d/ 를 python 에 넘길 때 fail — cygpath 로 변환)
   local pf="$STATE_FILE"
   command -v cygpath >/dev/null 2>&1 && pf="$(cygpath -m "$pf")"
-  STATE="$pf" KEY="$1" python -c "import json,os; print(json.load(open(os.environ['STATE'])).get(os.environ['KEY'], ''))"
+  STATE="$pf" KEY="$1" PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "import json,os; print(json.load(open(os.environ['STATE'])).get(os.environ['KEY'], ''))"
 }
 
 state_set_cursor() {
   local new_cursor="$1"
   local pf="$STATE_FILE"
   command -v cygpath >/dev/null 2>&1 && pf="$(cygpath -m "$pf")"
-  STATE="$pf" CURSOR="$new_cursor" python -c "
+  STATE="$pf" CURSOR="$new_cursor" PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "
 import json, os, time
 p = os.environ['STATE']
 with open(p) as f: s = json.load(f)

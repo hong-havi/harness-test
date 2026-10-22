@@ -46,13 +46,15 @@ done
 [[ -n "${SLACK_CHANNEL_ID:-}" ]] || die "SLACK_CHANNEL_ID 미설정"
 
 # JSON 바디 구성 (text 는 escape 필요)
-# python 이용 — 안정적인 json 인코딩
-BODY="$(TEXT="$TEXT" CHANNEL="$SLACK_CHANNEL_ID" THREAD_TS="$THREAD_TS" python -c "
-import json, os
+# Windows 에서 python 이 환경변수를 CP949 로 디코드해 한글이 깨지므로 UTF-8 강제.
+BODY="$(TEXT="$TEXT" CHANNEL="$SLACK_CHANNEL_ID" THREAD_TS="$THREAD_TS" \
+  PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "
+import json, os, sys
+sys.stdout.reconfigure(encoding='utf-8')
 payload = {'channel': os.environ['CHANNEL'], 'text': os.environ['TEXT']}
 if os.environ.get('THREAD_TS'):
     payload['thread_ts'] = os.environ['THREAD_TS']
-print(json.dumps(payload))
+print(json.dumps(payload, ensure_ascii=False))
 ")"
 
 RESPONSE="$(curl -sS -X POST \
@@ -66,7 +68,7 @@ if [[ $EMIT_JSON -eq 1 ]]; then
 fi
 
 # ok 체크
-OK="$(echo "$RESPONSE" | python -c "import json,sys; print(json.load(sys.stdin).get('ok', False))")"
+OK="$(echo "$RESPONSE" | PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "import json,sys; print(json.load(sys.stdin).get('ok', False))")"
 if [[ "$OK" != "True" ]]; then
   echo "ERROR: Slack API 실패" >&2
   echo "$RESPONSE" >&2
@@ -74,5 +76,5 @@ if [[ "$OK" != "True" ]]; then
 fi
 
 # ts 추출 (성공 시 스레드 reply 가능한 핸들)
-TS="$(echo "$RESPONSE" | python -c "import json,sys; print(json.load(sys.stdin).get('ts',''))")"
+TS="$(echo "$RESPONSE" | PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "import json,sys; print(json.load(sys.stdin).get('ts',''))")"
 echo "$TS"

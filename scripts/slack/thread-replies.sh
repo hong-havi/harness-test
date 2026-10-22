@@ -35,7 +35,7 @@ BOT_ID_CACHE="$REPO_ROOT/.harness/coord/bot_id.txt"
 if [[ ! -f "$BOT_ID_CACHE" ]]; then
   mkdir -p "$(dirname "$BOT_ID_CACHE")"
   curl -sS -H "Authorization: Bearer $SLACK_BOT_TOKEN" https://slack.com/api/auth.test \
-    | python -c "import json,sys; print(json.load(sys.stdin)['user_id'])" > "$BOT_ID_CACHE"
+    | PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "import json,sys; print(json.load(sys.stdin)['user_id'])" > "$BOT_ID_CACHE"
 fi
 BOT_ID="$(cat "$BOT_ID_CACHE")"
 
@@ -43,7 +43,7 @@ RESPONSE="$(curl -sS \
   -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   "https://slack.com/api/conversations.replies?channel=${SLACK_CHANNEL_ID}&ts=${THREAD_TS}&oldest=${OLDEST}&limit=${LIMIT}")"
 
-echo "$RESPONSE" | THREAD="$THREAD_TS" OLDEST="$OLDEST" BOT_ID="$BOT_ID" python -c "
+echo "$RESPONSE" | THREAD="$THREAD_TS" OLDEST="$OLDEST" BOT_ID="$BOT_ID" PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "
 import json, sys, os
 bot_id = os.environ['BOT_ID']
 thread_ts = os.environ['THREAD']

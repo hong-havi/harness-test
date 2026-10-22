@@ -37,7 +37,7 @@ BOT_ID_CACHE="$REPO_ROOT/.harness/coord/bot_id.txt"
 if [[ ! -f "$BOT_ID_CACHE" ]]; then
   mkdir -p "$(dirname "$BOT_ID_CACHE")"
   curl -sS -H "Authorization: Bearer $SLACK_BOT_TOKEN" https://slack.com/api/auth.test \
-    | python -c "import json,sys; print(json.load(sys.stdin)['user_id'])" > "$BOT_ID_CACHE"
+    | PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "import json,sys; print(json.load(sys.stdin)['user_id'])" > "$BOT_ID_CACHE"
 fi
 BOT_ID="$(cat "$BOT_ID_CACHE")"
 
@@ -51,7 +51,7 @@ if [[ $EMIT_JSON -eq 1 ]]; then
 fi
 
 # Slack 은 최신→과거 순서라서 역순 처리. 봇 멘션 포함 + 봇 자신이 아닌 메시지만.
-echo "$RESPONSE" | BOT_ID="$BOT_ID" python -c "
+echo "$RESPONSE" | BOT_ID="$BOT_ID" PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "
 import json, sys, os
 bot_id = os.environ['BOT_ID']
 data = json.load(sys.stdin)
