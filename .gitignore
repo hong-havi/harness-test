@@ -2,6 +2,7 @@
 .worktrees/
 .harness/chat/
 .harness/archive/
+.harness/coord/
 
 # ─── Env ─────────────────────────────────────────────────
 .env
