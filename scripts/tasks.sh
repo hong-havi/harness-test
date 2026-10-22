@@ -65,7 +65,7 @@ Commands:
   rework <task-id> <role>       current_role 을 지정 역할로 되돌리고 그 agent 재 spawn.
                                 QA/reviewer fail 판정 후 담당 역할(backend/frontend)로.
   merge [task-id]               Rebase + ff-only merge to main + cleanup
-  drop [task-id]                Archive and remove worktree/branch
+  drop [task-id] [--yes]        Archive and remove worktree/branch (--yes 로 확인 스킵)
   show [task-id]                Print task summary
   spawn [task-id] [role]        현재 또는 지정 역할 agent 재spawn (디버깅)
 
@@ -673,8 +673,16 @@ cmd_merge() {
 }
 
 cmd_drop() {
+  local given_id=""
+  local force=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --yes|--force|-y) force=1; shift ;;
+      *) given_id="$1"; shift ;;
+    esac
+  done
   local id
-  id="$(resolve_task_id "${1:-}")"
+  id="$(resolve_task_id "$given_id")"
   local f
   f="$(task_file "$id")"
   local branch slug wt_abs
@@ -683,8 +691,12 @@ cmd_drop() {
   wt_abs="$REPO_ROOT/.worktrees/${id}-${slug}"
 
   info "drop $id — 폐기합니다."
-  read -r -p "정말로? 되돌릴 수 없습니다 [y/N] " ans
-  [[ "$ans" == "y" || "$ans" == "Y" ]] || { info "취소됨"; return; }
+  if [[ $force -eq 0 ]]; then
+    read -r -p "정말로? 되돌릴 수 없습니다 [y/N] " ans
+    [[ "$ans" == "y" || "$ans" == "Y" ]] || { info "취소됨"; return; }
+  else
+    info "  (--yes: 확인 스킵)"
+  fi
 
   cd "$REPO_ROOT"
   # 해당 worktree 의 모든 터미널 close

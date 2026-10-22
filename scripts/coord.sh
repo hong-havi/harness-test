@@ -113,6 +113,7 @@ handle_command() {
 \`rework <task-id> <role>\` — 지정 역할로 되돌리고 재 spawn (fail 복구용)
 \`spawn <task-id> [role]\` — 현재 또는 지정 역할 agent 재 spawn (복구용)
 \`merge <task-id>\` — reviewer 수동 호출 (reviewer agent 가 못했을 때)
+\`drop <task-id>\` — task 폐기 (worktree/브랜치 제거, archive 로 이동)
 \`status\` — 활성 task 목록
 \`help\` — 이 안내
 
@@ -242,6 +243,24 @@ $(echo "$out" | tail -20)
         log_decision "task_merged" "$tid"
       else
         reply "❌ merge 실패:
+\`\`\`
+$out
+\`\`\`"
+      fi
+      ;;
+    "drop "*)
+      local tid="${cmd#drop }"
+      tid="$(echo "$tid" | awk '{print $1}')"
+      [[ -n "$tid" ]] || { reply "⚠ 사용법: \`drop <task-id>\` (즉시 폐기, 되돌릴 수 없음)"; return; }
+      local out
+      if out="$("$SCRIPT_DIR/tasks.sh" drop "$tid" --yes 2>&1)"; then
+        reply "🗑️ *dropped $tid*
+\`\`\`
+$(echo "$out" | tail -10)
+\`\`\`"
+        log_decision "task_dropped" "$tid"
+      else
+        reply "❌ drop 실패:
 \`\`\`
 $out
 \`\`\`"
