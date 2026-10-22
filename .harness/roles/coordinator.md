@@ -60,8 +60,69 @@ user의 **유일한 접점**. user 입력을 받아 어떤 task를 만들지/다
   - task id, 수용 기준 요약, 선행 역할의 결과물 위치(task.md 섹션)
 - 역할 agent는 세션 시작 시 `role.sh` 로 전체 컨텍스트를 다시 로드하므로, 중복 설명 금지
 
+## 재개 가능성 (Phase 3)
+
+Coordinator 세션은 **장기 실행**이지만 crash/재시작 가능. 모든 상태는 **파일에 영속**해 재시작 시 복구 가능해야 함.
+
+### State 파일: `.harness/coord/state.json`
+
+```json
+{
+  "schema": 1,
+  "updated_at": "2026-10-22T10:00:00Z",
+  "slack_cursor": "1792631917.779349",
+  "active_tasks": [
+    {
+      "id": "T001",
+      "slug": "signup-api",
+      "slack_thread_ts": "1792631917.779349",
+      "current_role": "backend",
+      "last_dispatched_at": "2026-10-22T09:50:00Z",
+      "last_check_at": "2026-10-22T09:58:00Z",
+      "notes": "backend 작업 중, 다음 체크 10분 후"
+    }
+  ],
+  "inbox": [
+    { "ts": "2026-10-22T09:55:00Z", "user": "havi", "body": "회원가입 수정 요청" }
+  ]
+}
+```
+
+### 재시작 프로토콜 (세션 시작 시)
+
+1. `.harness/coord/state.json` 존재 확인:
+   - 없음 → fresh start (Slack cursor 는 "지금부터")
+   - 있음 → 아래 복구
+2. **복구 작업**:
+   - `slack_cursor` 를 기점으로 그 이후 Slack 메시지 polling (놓친 메시지 처리)
+   - `active_tasks` 각각:
+     - `tasks.sh list` 와 crosscheck — 상태 불일치 시 live task.md 를 신뢰
+     - 각 task 의 `worker-list` (orca orchestration) 로 실제 agent 세션 상태 확인
+     - 완료된 역할이 있는데 advance 안 됐으면 수동 처리 또는 자동 advance
+   - `inbox` 미처리 항목 재분류
+3. Slack `#harness-coord` 에 "coordinator 재시작, N개 task 재개" 리포트 포스트
+
+### State 쓰기 규칙
+
+- **원자적 쓰기**: `state.json.tmp` 에 쓰고 `mv` 로 교체 (중간 crash 방지)
+- **쓰기 시점**: user 메시지 처리 후, task 상태 변경 후, 매 Slack 체크 라운드 후
+- **백업**: 매 쓰기마다 `state.json.bak.$(date +%Y%m%d_%H)` 로 시간당 1개 백업 유지 (관측용)
+
+### 체크포인트 로깅
+
+중요한 결정 지점마다 `.harness/coord/decisions.jsonl` 에 append:
+```json
+{"ts":"...","event":"task_created","id":"T003","slug":"profile-edit","reason":"user request"}
+{"ts":"...","event":"advance","id":"T001","from":"backend","to":"qa"}
+{"ts":"...","event":"escalation","id":"T002","to_user":"...","body":"PRD 모호 — 결정 필요"}
+```
+
+재시작 시 이 로그로 "직전에 뭘 하다 끊겼는지" 복원 가능.
+
 ## 체크리스트 (세션 종료 전)
 - [ ] user 메시지 전부 처리 (답변/dispatch/Inbox 캡처 중 하나)
 - [ ] 활성 task들의 상태가 chat log와 일치
 - [ ] board.md Inbox 반영 완료
-- [ ] 다음 모니터링 지점/pending 결정이 있다면 메모 남김
+- [ ] 다음 모니터링 지점/pending 결정이 있다면 state.json 에 메모
+- [ ] state.json 최신화 (`.harness/coord/state.json`)
+- [ ] decisions.jsonl 에 중요 결정 append 완료

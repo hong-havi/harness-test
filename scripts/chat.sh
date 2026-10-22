@@ -10,9 +10,24 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# worktree 안에서 호출돼도 메인 레포 chat 디렉토리 사용 (단일 진실 소스)
+GIT_COMMON_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir 2>/dev/null || echo "")"
+if [[ "$GIT_COMMON_DIR" = /* || "$GIT_COMMON_DIR" =~ ^[A-Z]:/ ]]; then
+  REPO_ROOT="$(dirname "$GIT_COMMON_DIR")"
+else
+  REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
 CHAT_DIR="$REPO_ROOT/.harness/chat"
 VALID_TYPES=(request dispatch question answer report deliver handoff error note)
+
+# .env 로드 (SLACK_* 를 위해)
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.env"
+  set +a
+fi
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -68,6 +83,38 @@ cmd_append() {
   f="$(chat_file "$id")"
   echo "$line" >> "$f"
   echo "appended → $f"
+
+  # Slack 미러 (토큰 있으면)
+  slack_mirror "$id" "$from" "$to" "$type" "$msg" || true
+}
+
+# task 당 1 Slack thread. thread_ts 를 .harness/chat/<id>.slack 에 저장.
+# 첫 메시지는 채널 최상위에, 이후는 thread reply.
+slack_mirror() {
+  local id="$1" from="$2" to="$3" type="$4" msg="$5"
+  [[ -n "${SLACK_BOT_TOKEN:-}" && -n "${SLACK_CHANNEL_ID:-}" ]] || return 0
+
+  local thread_file="$CHAT_DIR/${id}.slack"
+  local thread_ts=""
+  [[ -f "$thread_file" ]] && thread_ts="$(cat "$thread_file")"
+
+  # 메시지 포맷: [from → to] (type)\n body
+  local body="*[\`${from}\` → \`${to}\`]* (${type})
+${msg}"
+
+  local new_ts
+  if [[ -z "$thread_ts" ]]; then
+    # 첫 메시지 — 채널 최상위에 task 헤더 포스트
+    local header="📋 *${id}* 시작 ($(date -u +%Y-%m-%dT%H:%M:%SZ))
+${body}"
+    new_ts="$("$SCRIPT_DIR/slack/send.sh" --text "$header" 2>/dev/null)" || return 0
+    [[ -n "$new_ts" ]] || return 0
+    echo "$new_ts" > "$thread_file"
+    echo "slack: new thread $new_ts → $thread_file"
+  else
+    "$SCRIPT_DIR/slack/send.sh" --text "$body" --thread "$thread_ts" >/dev/null 2>&1 || true
+    echo "slack: appended to thread $thread_ts"
+  fi
 }
 
 cmd_view() {

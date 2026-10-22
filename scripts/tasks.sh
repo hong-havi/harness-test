@@ -52,7 +52,9 @@ Usage: $0 <command> [args]
 Commands:
   new <slug> [--no-spawn]       Create task + worktree + branch (planner 자동 spawn)
   list                          Show active tasks
-  advance [task-id] [--no-spawn] Move current_role to next, auto-spawn 다음 agent
+  advance [task-id] [--no-spawn] [--outcome succeeded|failed]
+                                Move current_role to next, auto-spawn 다음 agent.
+                                qa/reviewer 는 --outcome 필수, 그 외는 커밋 유무로 추론.
   merge [task-id]               Rebase + ff-only merge to main + cleanup
   drop [task-id]                Archive and remove worktree/branch
   show [task-id]                Print task summary
@@ -308,13 +310,17 @@ cmd_list() {
 cmd_advance() {
   local given_id=""
   local no_spawn=0
+  local outcome=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-spawn) no_spawn=1; shift ;;
+      --outcome)  outcome="$2"; shift 2 ;;
       -*) die "Unknown flag: $1" ;;
       *) given_id="$1"; shift ;;
     esac
   done
+  [[ -z "$outcome" || "$outcome" == "succeeded" || "$outcome" == "failed" ]] \
+    || die "--outcome 은 succeeded|failed 중 하나"
   local id
   id="$(resolve_task_id "$given_id")"
   # advance 는 live(worktree) task.md 를 조작 — main 에서 호출돼도 올바르게 동작
@@ -327,6 +333,28 @@ cmd_advance() {
   local current
   current="$(get_fm "$f" "current_role")"
   [[ -n "$current" ]] || die "current_role 을 읽지 못함: $f"
+
+  # 하이브리드 outcome 결정 (C 전략):
+  # - qa, reviewer: --outcome 플래그 강제 (품질 판정이라 명시 필요)
+  # - 그 외:        미지정이면 커밋 유무로 추론 (현재 역할 커밋이 1개 이상이면 succeeded)
+  if [[ "$current" == "qa" || "$current" == "reviewer" ]]; then
+    [[ -n "$outcome" ]] || die "역할 '$current' 는 --outcome succeeded|failed 명시 필요 (품질 결정)"
+  elif [[ -z "$outcome" ]]; then
+    local wt_abs="$WORKTREES_DIR/${id}-$(get_fm "$f" "slug")"
+    local commit_count=0
+    if [[ -d "$wt_abs" ]]; then
+      commit_count=$(cd "$wt_abs" && git log --oneline "main..HEAD" --author-date-order --grep="^${id} \[" --invert-grep -E 2>/dev/null | wc -l || echo 0)
+      # 폴백: grep 그냥 메시지 매치
+      commit_count=$(cd "$wt_abs" && git log "main..HEAD" --oneline 2>/dev/null | grep -c "^[a-f0-9]* ${id} \[.*\]:" | tr -d ' \n' || echo 0)
+    fi
+    if [[ "$commit_count" =~ ^[0-9]+$ && "$commit_count" -gt 0 ]]; then
+      outcome="succeeded"
+      info "outcome 추론: succeeded (role 커밋 ${commit_count}개 감지)"
+    else
+      outcome="failed"
+      info "outcome 추론: failed (role 커밋 없음)"
+    fi
+  fi
 
   # required_roles 리스트에서 role 추출 (주석 라인은 스킵)
   local roles
@@ -363,9 +391,14 @@ cmd_advance() {
   # frontmatter 의 current_role 교체
   sed -i.bak "s|^current_role: .*|current_role: $next|" "$f"
   rm -f "${f}.bak"
-  info "$id: current_role $current → $next"
+  info "$id: current_role $current → $next (outcome: ${outcome:-n/a})"
 
-  "$SCRIPT_DIR/chat.sh" append "$id" "$current" "$next" handoff "advance: $current → $next" >/dev/null
+  # role_history append (단순 JSONL 로 state.json 외부에 기록)
+  local hist_file="$CHAT_DIR/${id}.role-history.jsonl"
+  mkdir -p "$CHAT_DIR"
+  echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"$current\",\"outcome\":\"${outcome:-}\",\"next\":\"$next\"}" >> "$hist_file"
+
+  "$SCRIPT_DIR/chat.sh" append "$id" "$current" "$next" handoff "advance: $current → $next (outcome: ${outcome:-auto})" >/dev/null
 
   if [[ $no_spawn -eq 1 ]]; then
     info "(--no-spawn: 다음 agent 는 수동으로 spawn 하세요)"
