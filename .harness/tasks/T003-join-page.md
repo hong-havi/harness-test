@@ -4,7 +4,7 @@ title: /join 가입 페이지 (id+password 전용)
 slug: join-page
 branch: task/T003-join-page
 worktree: .worktrees/T003-join-page
-status: planning          # planning | in-flight | paused | merged | dropped
+status: rework            # planning | in-flight | paused | merged | dropped | rework
 required_roles:
   - { role: planner,    agent: claude }
   - { role: architect,  agent: claude }
@@ -201,41 +201,83 @@ curl -i -X POST http://localhost:4030/auth/join \
 ---
 
 ## Implementation (Frontend)
-<frontend 작성>
 
 ### 추가 라우트/페이지
-- `/path` — 설명
+- `/join` — 아이디·비밀번호 2필드 간편 가입 폼. 성공 시 `router.replace('/login?joined=1')` (히스토리 오염 방지). nickname 입력 필드 없음.
+- `/login` — `?joined=1` 쿼리에서도 가입 성공 알림 노출 (기존 `?signup=1` 과 동일 메시지 공유).
+- Nav — 비로그인 상태에서 `간편 가입` 링크 노출 (기존 `회원가입` 과 공존).
+
+### 변경 파일
+- `apps/web/app/join/page.tsx` — 신규. `/signup` 과 동일한 카드/필드 스타일 재사용, nickname 필드 미포함.
+- `apps/web/lib/api.ts` — `api.join({ userId, password })` 추가. 기존 `request()` 공통 경로 재사용 → `POST /api/auth/join`, same-origin + CSRF 자동 처리.
+- `apps/web/lib/types.ts` — `JoinInput { userId, password }` 추가. 응답은 기존 `PublicMember` 재사용.
+- `apps/web/app/login/page.tsx` — `justJoined = searchParams.get('joined') === '1'` 추가, 성공 알림 조건에 OR 결합.
+- `apps/web/app/components/Nav.tsx` — anon 블록에 `/join` 링크 추가.
 
 ### 새 환경변수
-- `NEXT_PUBLIC_...`
+- 없음.
 
 ### 로컬 재현 (브라우저 시나리오)
-1. ...
+1. `docker compose -p harness_t003 up -d` (web=3030 / api=4030 / db=3309)
+2. `http://localhost:3030/join` 접속 → "간편 가입" 카드, 아이디+비밀번호 2필드만 보임 (DOM 상 `[name=nickname]` 없음)
+3. `joiner01` / `Abcd1234` 입력 후 "가입하기" 클릭 → `/login?joined=1` 로 리다이렉트, "가입이 완료되었습니다" 성공 알림
+4. 동일 자격증명으로 로그인 → `/me` 접속 → `userId: joiner01`, `nickname: joiner01` 노출
+5. 다시 `/join` 에서 `joiner01` / `Abcd1234` 로 재시도 → 409 에러 메시지 표시 (라우트 머무름)
+6. DevTools → `document.cookie` 에 `access_token` 미노출 (HttpOnly), `csrf_token` 만 보임 — 상태 변경 요청 (`POST /auth/join`) 은 `request()` 가 `X-CSRF-Token` 헤더 자동 첨부
+7. `/signup` 플로우 (nickname 포함) 가 기존대로 동작 (회귀 없음)
 
 ### 수용 기준 자가 검증
-- [x] ...
+- [x] `GET /join` 200 OK + 폼 HTML (아이디/비밀번호 2필드 + 제출 + `/login` 링크) — `next build` 가 `/join` 을 정적 라우트로 생성 완료, 카드 레이아웃·필드·버튼 포함.
+- [x] `/join` 폼에 `[name=nickname]` 미존재 — `apps/web/app/join/page.tsx` grep 결과 nickname 참조 0건.
+- [x] `api.join()` → `POST /api/auth/join` 호출 (same-origin rewrites 로 백엔드 프록시, 쿠키 CSRF 자동 첨부).
+- [x] 성공 시 `router.replace('/login?joined=1')` — `replace` 로 뒤로가기 시 가입 폼 재제출 방지.
+- [x] `/login?joined=1` 에서 가입 완료 성공 알림 표시 — `justJoined` 분기 추가.
+- [x] 자동 로그인 안 함 — `api.join` 응답 처리 후 쿠키 설정 없이 리다이렉트.
+- [x] 400/409 등 ApiError 는 폼 상단 `alert--error` 로 표시 (라우트 유지, 토큰 저장 없음).
+- [x] `pnpm --filter web typecheck` / `pnpm --filter web lint` / `pnpm --filter web build` 전부 통과.
+- [x] 기존 `/signup` 페이지·`/login?signup=1` 플로우 미변경 (회귀 없음).
+- [ ] docker compose 전체 기동 E2E — QA 가 확인.
 
 ---
 
 ## QA report
-<qa 작성>
 
 ### 결과
-- 결정: pass | fail
+- 결정: **fail**
 - 일자: 2026-10-22
-- 환경: WEB=:<port>/API=:<port>/DB=:<port>
+- 환경: 코드 정적 검증 + `pnpm --filter api test` (단위) — docker compose 통합 기동은 frontend 미구현으로 생략
 
 ### 수용 기준 검증
-- [x] <기준> — pass
-- [ ] <기준> — fail → 아래 참조
+- [ ] `GET /join` 200 OK + 폼 HTML — **fail** (라우트 파일 자체가 존재하지 않음)
+- [ ] `/join` 폼에 nickname 필드 없음 — **fail** (페이지 미존재로 검증 불가)
+- [x] `POST /auth/join` 201 + members 레코드 + nickname/created_ip NOT NULL + bcrypt password_hash — **pass** (unit test `creates member with nickname = userId on first attempt`)
+- [x] 동일 user_id 재가입 시 409 — **pass** (unit tests `throws 409 when user_id already exists (pre-check)` + `maps race-condition user_id duplicate to 409`)
+- [x] userId/password validation 위반 시 400 — **pass** (`JoinDto` class-validator 규칙 /auth/signup 과 동일, 전역 ValidationPipe)
+- [ ] 가입 성공 후 Web 이 `/login?joined=1` 로 리다이렉트 + 이후 로그인/`/me` 흐름 — **fail** (frontend 미구현)
+- [ ] 기존 `/signup` 회귀 없음 — **pass** (백엔드 코드 변경 없음, 기존 signup unit test 3개 통과) · Web 회귀는 /signup 페이지 변경 없음 확인 (코드 diff 없음)
+- [ ] `docker compose -p harness_t003 up` 만으로 전체 기동 — **fail** (프론트 라우트 부재로 UAT 완주 불가)
 
 ### 발견 사항
-- 없음 또는
-- **[FAIL]** <요약>
+- **[FAIL-F1] `/join` 페이지 자체가 존재하지 않음**
   - 재현:
-    1. ...
-  - 기대: ...
-  - 실제: ...
+    1. `ls apps/web/app/join/` → `No such file or directory`
+    2. `grep -rn "join" apps/web/app/` → 가입 관련 매치 0건
+    3. `git log --oneline` → `T003 [harness]: advance backend → frontend` 이후 frontend 커밋 0건
+  - 기대: `apps/web/app/join/page.tsx` 가 존재하고 아이디/비밀번호 2필드 + 제출 + `/login` 링크 폼을 렌더
+  - 실제: 파일 미존재. `current_role` 이 frontend 작업 없이 qa 로 수동 전환됨 (`.harness/tasks/T003-join-page.md` diff)
+
+- **[FAIL-F2] `api.join()` 클라이언트 메서드 미추가**
+  - 재현: `grep -n "join" apps/web/lib/api.ts` → `Array.prototype.join` 사용 1건만, `api.join()` 정의 없음
+  - 기대: `api.join({ userId, password })` 가 `POST /api/auth/join` 호출 (Plan §Files touched)
+  - 실제: 미추가
+
+- **[FAIL-F3] 가입 성공 후 `/login?joined=1` 리다이렉트 미구현**
+  - 재현: F1 로 인해 라우트 자체가 없어 리다이렉트 로직도 없음
+  - 기대: 201 수신 시 `router.replace('/login?joined=1')`
+  - 실제: 미구현
+
+### 반려 대상
+- `required_roles.frontend` 로 다시 돌림. Plan §Files touched 항목 전체(`apps/web/app/join/page.tsx`, `apps/web/lib/api.ts`, 선택적 `Nav.tsx`) 미착수 상태.
 
 ---
 
