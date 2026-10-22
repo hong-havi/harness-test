@@ -36,6 +36,7 @@ describe('MembersService', () => {
         id: '1',
         userId: 'alice01',
         nickname: 'alice',
+        email: null,
         createdAt: new Date('2026-10-20T00:00:00Z'),
         updatedAt: new Date('2026-10-20T00:00:00Z'),
       });
@@ -46,11 +47,27 @@ describe('MembersService', () => {
         id: '1',
         userId: 'alice01',
         nickname: 'alice',
+        email: null,
         createdAt: new Date('2026-10-20T00:00:00Z'),
         updatedAt: new Date('2026-10-20T00:00:00Z'),
       });
       expect(result).not.toHaveProperty('passwordHash');
       expect(result).not.toHaveProperty('createdIp');
+    });
+
+    it('exposes email when set', async () => {
+      (repo.findOne as jest.Mock).mockResolvedValue({
+        id: '1',
+        userId: 'alice01',
+        nickname: 'alice',
+        email: 'alice@example.com',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const result = await service.getMe('1');
+
+      expect(result.email).toBe('alice@example.com');
     });
   });
 
@@ -92,6 +109,55 @@ describe('MembersService', () => {
           currentPassword: 'wrong-password-9',
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('sets email when provided', async () => {
+      (repo.findOne as jest.Mock).mockResolvedValue({
+        id: '1',
+        userId: 'alice01',
+        nickname: 'alice',
+        email: 'alice@example.com',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const result = await service.updateMe('1', { email: 'alice@example.com' });
+
+      expect(repo.update).toHaveBeenCalledWith(
+        { id: '1' },
+        { email: 'alice@example.com' },
+      );
+      expect(result.email).toBe('alice@example.com');
+    });
+
+    it('clears email when null is passed', async () => {
+      (repo.findOne as jest.Mock).mockResolvedValue({
+        id: '1',
+        userId: 'alice01',
+        nickname: 'alice',
+        email: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      await service.updateMe('1', { email: null });
+
+      expect(repo.update).toHaveBeenCalledWith({ id: '1' }, { email: null });
+    });
+
+    it('accepts email-only patch (no 400)', async () => {
+      (repo.findOne as jest.Mock).mockResolvedValue({
+        id: '1',
+        userId: 'alice01',
+        nickname: 'alice',
+        email: 'a@b.com',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      await expect(
+        service.updateMe('1', { email: 'a@b.com' }),
+      ).resolves.toBeDefined();
     });
 
     it('updates password with correct currentPassword', async () => {

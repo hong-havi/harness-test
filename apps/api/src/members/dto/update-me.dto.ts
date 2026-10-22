@@ -1,4 +1,6 @@
+import { Transform } from 'class-transformer';
 import {
+  IsEmail,
   IsOptional,
   IsString,
   Length,
@@ -25,4 +27,12 @@ export class UpdateMeDto {
   @ValidateIf((o: UpdateMeDto) => o.newPassword !== undefined)
   @IsString({ message: 'currentPassword가 필요합니다.' })
   currentPassword?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => (value === '' ? null : value))
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(254, { message: 'email은 254자 이하여야 합니다.' })
+  @IsEmail({}, { message: 'email 형식이 올바르지 않습니다.' })
+  email?: string | null;
 }

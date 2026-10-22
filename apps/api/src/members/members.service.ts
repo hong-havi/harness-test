@@ -17,6 +17,7 @@ export interface MeView {
   id: string;
   userId: string;
   nickname: string;
+  email: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -39,7 +40,8 @@ export class MembersService {
   async updateMe(id: string, dto: UpdateMeDto): Promise<MeView> {
     const hasNickname = dto.nickname !== undefined;
     const hasPassword = dto.newPassword !== undefined;
-    if (!hasNickname && !hasPassword) {
+    const hasEmail = dto.email !== undefined;
+    if (!hasNickname && !hasPassword && !hasEmail) {
       throw new BadRequestException('수정할 항목이 없습니다.');
     }
 
@@ -70,6 +72,7 @@ export class MembersService {
     const patch: Partial<MemberEntity> = {};
     if (hasNickname) patch.nickname = dto.nickname;
     if (hasPassword) patch.passwordHash = await bcrypt.hash(dto.newPassword!, BCRYPT_SALT_ROUNDS);
+    if (hasEmail) patch.email = dto.email ?? null;
 
     try {
       await this.membersRepo.update({ id }, patch);
@@ -91,6 +94,7 @@ export class MembersService {
       id: String(m.id),
       userId: m.userId,
       nickname: m.nickname,
+      email: m.email ?? null,
       createdAt: m.createdAt,
       updatedAt: m.updatedAt,
     };
