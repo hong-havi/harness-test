@@ -45,22 +45,24 @@ done
 [[ -n "${SLACK_BOT_TOKEN:-}" ]] || die "SLACK_BOT_TOKEN 미설정 (.env 확인)"
 [[ -n "${SLACK_CHANNEL_ID:-}" ]] || die "SLACK_CHANNEL_ID 미설정"
 
-# JSON 바디 구성 (text 는 escape 필요)
-# Windows 에서 python 이 환경변수를 CP949 로 디코드해 한글이 깨지므로 UTF-8 강제.
-BODY="$(TEXT="$TEXT" CHANNEL="$SLACK_CHANNEL_ID" THREAD_TS="$THREAD_TS" \
+# JSON 바디 구성 — text 는 stdin 으로 전달 (환경변수 경로는 Windows locale 로 깨짐).
+BODY="$(printf '%s' "$TEXT" | CHANNEL="$SLACK_CHANNEL_ID" THREAD_TS="$THREAD_TS" \
   PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "
 import json, os, sys
+sys.stdin.reconfigure(encoding='utf-8')
 sys.stdout.reconfigure(encoding='utf-8')
-payload = {'channel': os.environ['CHANNEL'], 'text': os.environ['TEXT']}
+text = sys.stdin.read()
+payload = {'channel': os.environ['CHANNEL'], 'text': text}
 if os.environ.get('THREAD_TS'):
     payload['thread_ts'] = os.environ['THREAD_TS']
 print(json.dumps(payload, ensure_ascii=False))
 ")"
 
-RESPONSE="$(curl -sS -X POST \
+# curl --data 는 bash 변수 경유로 바이트 손상 가능 → 파일로 전달 (--data-binary @-)
+RESPONSE="$(printf '%s' "$BODY" | curl -sS -X POST \
   -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   -H "Content-Type: application/json; charset=utf-8" \
-  --data "$BODY" \
+  --data-binary @- \
   https://slack.com/api/chat.postMessage)"
 
 if [[ $EMIT_JSON -eq 1 ]]; then
