@@ -126,7 +126,16 @@ PRD 모호, 결정 필요, 추가 데이터 요청 등 user 답이 필요한 경
    <Q2>: ...
    <Q3>: ..."
    \`\`\`
-   이 메시지가 Slack 스레드에 미러됩니다.
+
+   **긴 질문(한 줄 넘거나 여러 Q)** 은 argv 가 공백/따옴표에서 잘릴 수 있으니 **임시 파일 + --from** 사용:
+   \`\`\`
+   cat > /tmp/q.txt << 'EOF'
+   Q1. ... A. ... B. ...
+   Q2. ... A. ... B. ...
+   EOF
+   ./scripts/chat.sh append ${TASK_ID} ${ROLE} user question --from /tmp/q.txt
+   \`\`\`
+   그 후 \`rm -f /tmp/q.txt\`.
 
 2. 여러 결정이 필요하면 **하나의 chat.sh question 호출에 Q1/Q2/Q3 로 묶어 전송** (여러 번 보내지 말 것).
 

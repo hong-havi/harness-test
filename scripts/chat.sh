@@ -35,6 +35,7 @@ usage() {
   cat <<EOF
 Usage:
   $0 append <task-id> <from> <to> <type> <message...>
+  $0 append <task-id> <from> <to> <type> --from <file>    # 긴 메시지(argv quoting 이슈 회피)
   $0 view   <task-id>
   $0 tail   <task-id>
   $0 raw    <task-id>
@@ -64,7 +65,15 @@ cmd_append() {
   local id="${1:-}" from="${2:-}" to="${3:-}" type="${4:-}"
   [[ -n "$id" && -n "$from" && -n "$to" && -n "$type" ]] || { usage; exit 1; }
   shift 4 || true
-  local msg="$*"
+  # 긴 message 는 argv quoting 이슈로 깨질 수 있어 --from <file> 지원.
+  local msg=""
+  if [[ "${1:-}" == "--from" ]]; then
+    [[ -n "${2:-}" && -f "$2" ]] || die "--from 뒤에 유효한 파일 경로 필요"
+    msg="$(cat "$2")"
+    shift 2
+  else
+    msg="$*"
+  fi
   [[ -n "$msg" ]] || die "message 가 비어있음"
 
   local valid=0
