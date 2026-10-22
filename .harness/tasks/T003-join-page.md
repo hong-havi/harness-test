@@ -12,7 +12,7 @@ required_roles:
   - { role: frontend,   agent: claude }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: claude }
-current_role: frontend
+current_role: qa
 role_history: []
 ports:
   web: 3030
@@ -278,6 +278,36 @@ curl -i -X POST http://localhost:4030/auth/join \
 
 ### 반려 대상
 - `required_roles.frontend` 로 다시 돌림. Plan §Files touched 항목 전체(`apps/web/app/join/page.tsx`, `apps/web/lib/api.ts`, 선택적 `Nav.tsx`) 미착수 상태.
+
+## QA report v2
+
+### 결과
+- 결정: **pass**
+- 일자: 2026-10-22
+- 환경: `docker compose -p harness_t003 up -d` (web=3030 / api=4030 / db=3309), 마이그레이션 적용 완료, unit 23 passed
+
+### 수용 기준 검증
+- [x] `GET /join` 200 OK + 폼 HTML — `curl http://localhost:3030/join` 200, HTML 에 `name="userId"`, `name="password"`, "가입하기" 버튼, `/login` 링크 포함
+- [x] `/join` 폼에 nickname 필드 없음 — HTML grep 결과 `name="nickname"` 미존재
+- [x] `POST /auth/join` 201 + members 레코드 + nickname/created_ip NOT NULL + bcrypt password_hash — `curl -X POST .../auth/join {userId:"joiner01", password:"Abcd1234"}` → 201 `{id:"1", userId:"joiner01", nickname:"joiner01"}`, DB 조회 `password_hash` prefix `$2b$`, `created_ip` NOT NULL
+- [x] 동일 user_id 재가입 시 409 — 두 번째 호출 → 409 Conflict
+- [x] userId/password validation 위반 시 400 — `{userId:"ab", ...}` 및 `{password:"short"}` 각각 400
+- [x] 가입 성공 후 Web 이 `/login?joined=1` 로 리다이렉트 + 이후 로그인/`/members/me` 흐름 — `router.replace('/login?joined=1')` (`join/page.tsx:22`), `/login?joined=1` HTML 에 "가입이 완료되었습니다. 로그인해 주세요." 노출, `POST /auth/login` → 쿠키 발급, `GET /members/me` → `{userId:"joiner01", nickname:"joiner01"}`
+- [x] 기존 `/signup` 회귀 없음 — `GET /signup` 200, `POST /auth/signup {userId:"legacy01",...,nickname:"legacy01"}` 201, 기존 signup unit test 3개 통과
+- [x] `docker compose -p harness_t003 up` 만으로 전체 기동 — db/api/web 3개 컨테이너 Running, 전수 E2E curl 흐름 완주
+
+### 비기능 샘플 체크
+- HttpOnly 쿠키: `Set-Cookie: access_token=...; HttpOnly` 확인, 응답 바디에 토큰 없음
+- 가입 API 는 쿠키 미발급 (F-M1 자동 로그인 금지 정책 준수)
+- bcrypt 해시: DB `password_hash` prefix `$2b$`
+
+### 검증 로그 요약
+- `pnpm --filter api test` → 23 passed (3 signup + 6 join + 3 login + csrf + members)
+- `docker compose -p harness_t003 ps` → db(healthy) / api(Up) / web(Up)
+- 수동 재현 전부 기대값 일치
+
+### 비고
+- 이전 라운드(QA v1)의 반려 사유 F1~F3 는 frontend 커밋 `4aee2c2` (/join 페이지 + api.join() 추가) 와 `35de3b2` (frontend Implementation 섹션) 로 모두 해소됨
 
 ---
 
