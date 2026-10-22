@@ -112,7 +112,22 @@ handle_command() {
 \`advance <task-id> succeeded|failed\` — qa/reviewer outcome 명시
 \`rework <task-id> <role>\` — 지정 역할로 되돌리고 재 spawn (fail 복구용)
 \`status\` — 활성 task 목록
-\`help\` — 이 안내"
+\`help\` — 이 안내
+
+👥 *역할 (8개)* — task 당 planner 가 \`required_roles\` 로 선언
+• \`coordinator\` — user 유일 접점. dispatch·리포팅 (저 입니다)
+• \`planner\` — 요구를 명세로 분해 + required_roles 지정
+• \`architect\` — 엔티티/API 계약·보안 설계
+• \`designer\` — Figma MCP + apps/web 코드 뼈대 (UI 필요 시)
+• \`backend\` — apps/api 구현 + DB 핸들
+• \`frontend\` — apps/web 구현
+• \`qa\` — docker up + 수용 기준 전수 UAT (fail → rework)
+• \`reviewer\` — 보안/누수/성능 리뷰 + rebase + ff-only merge
+
+🔄 *진행 흐름* (자동 체인)
+\`planner → architect → [designer?] → backend → frontend → qa → reviewer → merged\`
+
+ℹ️ 각 역할의 상세 지침은 \`.harness/roles/<role>.md\`"
       ;;
     "status")
       local out
