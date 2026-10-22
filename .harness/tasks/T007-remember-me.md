@@ -13,7 +13,7 @@ required_roles:
   # - { role: frontend,   agent: claude }
   - { role: qa,         agent: claude }
   - { role: reviewer,   agent: claude }
-current_role: qa
+current_role: reviewer
 role_history: []
 ports:
   web: 3070
@@ -432,25 +432,24 @@ DTO/검증
 ---
 
 ## Review notes
-<reviewer 작성>
 
 ### 결과
-- 결정: pass | rework
+- 결정: pass
 - 일자: 2026-10-22
-- 병합 SHA: <sha> (pass 시)
+- 병합 SHA: (merge 후 자동 기록)
 
 ### Blocker
-- 없음 또는
-- `file.ts:42` — <문제>, <수정 가이드>
+- 없음
 
 ### Suggest
-- `file.ts:88` — <개선 아이디어>
+- `apps/api/src/auth/auth.controller.ts:57` — `result.maxAgeSeconds === null ? null : result.maxAgeSeconds * 1000` 는 "login 경로는 `0` 을 반환하지 않는다" 는 암묵적 가정에 의존. 지금은 안전하지만 향후 센티넬 추가 시 혼동 여지. 범위 내 수정 불필요.
+- `apps/api/src/auth/auth.service.ts:168` — `dto.rememberMe === true` 는 class-validator 통과 후 `boolean | undefined` 만 들어온다는 전제에서 다소 방어적. 가독성 양호하므로 유지.
 
 ### 체크리스트 요약
-- PRD 정합성: ✅
-- 보안: ✅
-- 리소스/누수: ✅
-- 성능/데이터: ✅
-- 코드 품질: ✅
-- 테스트: ✅
-- 범위: ✅
+- PRD 정합성: ✅ (§3.2/§3.3 쿠키·JWT 수명만 조건부 확장, 응답 바디/다른 계약 불변)
+- 보안: ✅ (HttpOnly/SameSite=Lax/Path=//Secure(prod) 유지, `@IsBoolean()` + ValidationPipe `whitelist/forbidNonWhitelisted/transform` 로 비-boolean 400, logout 즉시 만료 회귀 없음)
+- 리소스/누수: ✅ (신규 리소스·스키마·커넥션 변경 없음)
+- 성능/데이터: ✅ (쿼리/인덱스/마이그레이션 영향 없음)
+- 코드 품질: ✅ (`REMEMBER_ME_EXPIRES_SECONDS` 상수화, `cookieOptions(number | null)` 시그니처 명확, 커밋 접두어 `T007 [claude]:` 일관)
+- 테스트: ✅ (`auth.service.spec.ts` 에 rememberMe true/false/undefined/no-field 케이스, `maxAgeSeconds` + `jwt.signAsync({expiresIn})` 양쪽 어서션, 26 passed)
+- 범위: ✅ (apps/api/auth 모듈만 변경, UI 는 required_roles 에 frontend 미포함으로 명시적 범위 밖)
