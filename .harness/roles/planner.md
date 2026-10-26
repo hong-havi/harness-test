@@ -31,7 +31,7 @@ coordinator로부터 받은 요구를 **구현 가능한 명세**로 바꾸고, 
 5. **의존**(blocked_by) — 다른 task가 선행되어야 하면 명시.
 6. task.md의 Plan 섹션에 모두 기록.
 7. chat 에 완료 보고 (`deliver`) — bootstrap-prompt 포맷 참조.
-8. **`orca orchestration worker-done --outcome succeeded`** 호출 → Coordinator 가 다음 역할(architect) 자동 spawn. (Phase 3 의 `tasks.sh advance` 는 제거됨)
+8. **`orca orchestration send --type worker_done --outcome succeeded`** 호출 → Coordinator 가 다음 역할(architect) 자동 spawn. (Phase 3 의 `tasks.sh advance` 는 제거됨)
 9. 세션 종료.
 
 ## 하지 말 것

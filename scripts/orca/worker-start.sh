@@ -108,12 +108,7 @@ else
     || info "  (tui-idle timeout — 계속 진행)"
   sleep 2
 
-  SPEC="$(build_spec)"
-  info "  → preamble 주입 (${#SPEC} chars)..."
-  orca terminal send --terminal "$HANDLE" --text "$SPEC" --enter --wait-submit 10 --json >/dev/null 2>&1 \
-    || die "preamble 주입 실패"
-
-  # worker-start --terminal 로 Run 에 등록 (orchestration 이 settled 관리)
+  # 먼저 worker-start --terminal 로 Run 에 등록하고 Task+Dispatch ID 받음
   info "  worker-start --terminal $HANDLE (Run 에 등록)..."
   REG="$(orca orchestration worker-start \
     --run "$RUN_ID" \
@@ -122,7 +117,38 @@ else
     --worktree "path:$WORKTREE_ORCA" \
     --task-title "$TASK_ID: $ROLE" \
     --json 2>&1)" || true
-  echo "$REG" | tail -5
+  echo "$REG" | tail -10
+
+  # Task/Dispatch ID 추출 (worker-done 호출에 필요)
+  local orch_task_id orch_dispatch_id
+  orch_task_id="$(echo "$REG" | grep -oE '"taskId":[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+  orch_dispatch_id="$(echo "$REG" | grep -oE '"dispatchId":[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+
+  # SPEC 에 **orchestration IDs 추가** (kiro 가 worker-done 호출 시 사용)
+  SPEC="$(build_spec)"
+  SPEC="$SPEC
+
+## Orchestration IDs (worker-done 호출 시 반드시 포함)
+
+- **Task ID**: ${orch_task_id:-unknown}
+- **Dispatch ID**: ${orch_dispatch_id:-unknown}
+- **Run ID**: $RUN_ID
+
+작업 완료 시 반드시 이 ID 로 worker_done 메시지 전송:
+
+    orca orchestration send --type worker_done \\
+      --task-id ${orch_task_id:-<copy from above>} \\
+      --dispatch-id ${orch_dispatch_id:-<copy from above>} \\
+      --outcome succeeded \\
+      --summary \"<한 줄 요약>\" \\
+      --files-modified \"<file1>,<file2>\"
+
+** 중요 **: 이 send 명령은 **반드시 자기 kiro-cli 세션의 bash tool 로 호출** 해야 합니다 (sender handle 이 Dispatch assignee 와 일치해야 Orca 가 유효 신호로 인식). 다른 터미널에서 호출하면 거부됨.
+"
+
+  info "  → preamble 주입 (${#SPEC} chars, task=$orch_task_id dispatch=$orch_dispatch_id)..."
+  orca terminal send --terminal "$HANDLE" --text "$SPEC" --enter --wait-submit 10 --json >/dev/null 2>&1 \
+    || die "preamble 주입 실패"
 fi
 
 [[ -n "$HANDLE" ]] || die "worker 시작 실패 — handle 없음"

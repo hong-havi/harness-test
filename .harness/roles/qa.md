@@ -59,8 +59,8 @@ docker compose up               # web + api
      실제: 500 (스택트레이스 노출)
    ```
 3. 결정:
-   - 전부 pass → chat `deliver` → **`orca orchestration worker-done --outcome succeeded`** 호출 → Coordinator 가 reviewer 자동 spawn. 세션 종료.
-   - 1개라도 fail → chat `handoff` + 재현 절차 명시 → **`orca orchestration worker-done --outcome failed --summary "fail 사유 + 재현 요약"`** 호출. Coordinator 가 user 에게 중계하고 user 가 `rework` 명령으로 담당 역할 지정.
+   - 전부 pass → chat `deliver` → **`orca orchestration send --type worker_done --outcome succeeded`** 호출 → Coordinator 가 reviewer 자동 spawn. 세션 종료.
+   - 1개라도 fail → chat `handoff` + 재현 절차 명시 → **`orca orchestration send --type worker_done --outcome failed --summary "fail 사유 + 재현 요약"`** 호출. Coordinator 가 user 에게 중계하고 user 가 `rework` 명령으로 담당 역할 지정.
 4. 수정 후 재검증은 **새 라운드**(QA report v2 섹션)로 기록.
 
 ## 하지 말 것

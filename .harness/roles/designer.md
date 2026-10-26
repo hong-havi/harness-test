@@ -41,7 +41,7 @@ UI가 필요한 task에서 **Figma 디자인** + **`apps/web` 코드 뼈대**를
    - 화면 목록 + 각 화면별 상태 (default/loading/error/empty)
    - 컴포넌트 트리 간단 요약
    - frontend가 이어받을 때 주의할 점 (디자인 토큰 사용법 등)
-7. chat `deliver` → **`orca orchestration worker-done --outcome succeeded`** 호출 → Coordinator 가 다음 역할 자동 spawn. 세션 종료.
+7. chat `deliver` → **`orca orchestration send --type worker_done --outcome succeeded`** 호출 → Coordinator 가 다음 역할 자동 spawn. 세션 종료.
 
 ## 하지 말 것
 - 비즈니스 로직 구현 (상태 훅 로직, API 연동, 검증)

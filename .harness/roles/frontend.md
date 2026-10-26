@@ -42,7 +42,7 @@
    - 새 환경변수 (있으면)
    - 수용 기준 자가 검증
    - 로컬 재현 명령 (URL + 조작 순서)
-7. chat `deliver` → **`orca orchestration worker-done --outcome succeeded`** 호출 → Coordinator 가 다음 역할 자동 spawn. 세션 종료.
+7. chat `deliver` → **`orca orchestration send --type worker_done --outcome succeeded`** 호출 → Coordinator 가 다음 역할 자동 spawn. 세션 종료.
 
 ## 하지 말 것
 - 전역 상태 라이브러리 성급 도입 (초기엔 React state + fetch로 충분)

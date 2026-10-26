@@ -67,26 +67,27 @@ Phase 3 의 \`./scripts/tasks.sh advance\` 는 **완전히 제거**됐습니다.
 
    **일반 역할 (planner / architect / designer / backend / frontend)**:
 
-    orca orchestration worker-done \\
+    orca orchestration send --type worker_done \\
       --outcome succeeded \\
       --summary "<한 줄 요약>" \\
       --files-modified "<file1>,<file2>"
+      # (task-id/dispatch-id 는 preamble 하단 'Orchestration IDs' 섹션 참조)
 
    **qa 역할** (명시적 outcome 필수):
 
-    orca orchestration worker-done --outcome succeeded --summary "..." --files-modified "..."
+    orca orchestration worker_done 전송 --outcome succeeded --summary "..." --files-modified "..."
     # 또는 fail 시
-    orca orchestration worker-done --outcome failed --summary "fail 사유 + 재현 절차" --files-modified "..."
+    orca orchestration worker_done 전송 --outcome failed --summary "fail 사유 + 재현 절차" --files-modified "..."
 
    **reviewer 역할** (user 승인 필수 — advance/merge 자동 호출 금지):
 
-   체크리스트 통과 + "approve for merge" 커밋 후, **merge 하지 말고 worker-done 전에** 사용자 승인 요청:
+   체크리스트 통과 + "approve for merge" 커밋 후, **merge 하지 말고 worker_done 전송 전에** 사용자 승인 요청:
 
     printf 'Review pass 요약:\n- 변경 N건\n- 체크리스트 전수 통과\n\nmerge 할까요? (merge / no / rework)\n' > /tmp/approve.txt
     orca orchestration ask --from /tmp/approve.txt
     # user 답을 받고 (터미널에 주입됨), 그 답에 따라:
-    #   merge → ./scripts/tasks.sh merge ${TASK_ID} 호출 후 worker-done --outcome succeeded
-    #   no / rework → worker-done --outcome failed --summary "user rejected: ..."
+    #   merge → ./scripts/tasks.sh merge ${TASK_ID} 호출 후 worker_done 전송 --outcome succeeded
+    #   no / rework → worker_done 전송 --outcome failed --summary "user rejected: ..."
 
 4. **세션 종료**. agent CLI 가 알아서 종료합니다. shell 수동 exit 불필요.
 
@@ -102,7 +103,7 @@ Phase 3 의 \`./scripts/tasks.sh advance\` 는 **완전히 제거**됐습니다.
 1. role.sh 로 지침 로드
 2. 역할 지침대로 작업 + 커밋
 3. 질문 필요 시 \`orca orchestration ask\` (TUI 금지)
-4. 완료 시 deliver 메시지 chat.sh append + \`orca orchestration worker-done\`
+4. 완료 시 deliver 메시지 chat.sh append + \`orca orchestration worker_done 전송\`
 5. 세션 종료
 
 의심 가면 role.md 와 .harness/COORDINATOR.md 재참조. 지침 외 결정 임의 금지.

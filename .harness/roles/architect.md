@@ -34,7 +34,7 @@ planner의 명세를 받아 **어떻게 만들지** 설계한다. 데이터 모�
 5. **테스트 포인트** 명시 (QA가 수용 기준을 어떤 수준에서 확인할지)
 6. task.md의 Design 섹션에 기록.
 7. chat 에 `deliver`.
-8. **`orca orchestration worker-done --outcome succeeded`** 호출 → Coordinator 가 다음 역할 자동 spawn. 세션 종료. (Phase 3 의 `tasks.sh advance` 는 제거됨)
+8. **`orca orchestration send --type worker_done --outcome succeeded`** 호출 → Coordinator 가 다음 역할 자동 spawn. 세션 종료. (Phase 3 의 `tasks.sh advance` 는 제거됨)
 
 ## 하지 말 것
 - 구현 코드 작성 (의사 코드/시그니처까지만)
