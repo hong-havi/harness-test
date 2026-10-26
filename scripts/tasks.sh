@@ -32,6 +32,17 @@ fi
 
 HARNESS_DIR="$REPO_ROOT/.harness"
 TASKS_DIR="$HARNESS_DIR/tasks"
+
+# .env 로드 (HARNESS_DEFAULT_AGENT, SLACK_* 등). MAIN_REPO_ROOT 쪽을 우선.
+for env_file in "$MAIN_REPO_ROOT/.env" "$REPO_ROOT/.env"; do
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+    break
+  fi
+done
 CHAT_DIR="$MAIN_REPO_ROOT/.harness/chat"      # handles 는 main 에 공유
 ARCHIVE_DIR="$MAIN_REPO_ROOT/.harness/archive"
 WORKTREES_DIR="$MAIN_REPO_ROOT/.worktrees"
