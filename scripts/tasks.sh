@@ -385,7 +385,8 @@ cmd_new() {
   run_json="$(orca orchestration run-create \
     --objective "Task $id ($slug): $description" \
     --json 2>&1)"
-  run_id="$(echo "$run_json" | awk -F'"' '/"runId":/{print $4; exit}')"
+  # run_e... 패턴 찾기 (orca 응답은 "id":"run_..." 형태)
+  run_id="$(echo "$run_json" | grep -oE '"id":[[:space:]]*"run_[a-zA-Z0-9]+"' | head -1 | sed -E 's/.*"id":[[:space:]]*"([^"]+)".*/\1/')"
   [[ -n "$run_id" ]] || { info "⚠ run-create 실패:"; echo "$run_json" | tail -5; return 1; }
   info "  run_id=$run_id"
 
