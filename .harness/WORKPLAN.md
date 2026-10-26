@@ -226,7 +226,140 @@ tasks.sh 변경:
 3. **Coordinator 세션 수명**: Orca 자동 재시작 지원 여부 — 지금은 수동 유지 가정
 4. **kiro worker_done**: `tasks.sh advance` 가 `worker_done` 호출 시 `--outcome` 결정 로직 — kiro 작업 커밋 유무로 판정 vs 명시적 "pass/fail" 수동 입력
 
-### Phase 4 (선택) — 관측 레이어
+### Phase 4 — Orca orchestration 전환 (현재 작업 중)
+
+**배경**: Phase 3 end-to-end 반복 테스트에서 **"shell wrapper 로 self-advance"** 패턴이 fundamentally fragile 함을 확인. agent 세션 (특히 kiro-cli) 이 `/quit` 하면서 내부 bash tool 호출(`tasks.sh advance → spawn.sh`)이 중단되어 자동 체인 반복 깨짐. 수십 번 수정으로도 해결 안됨.
+
+**방향 전환**: Orca orchestration primitives (run-create / worker-start / check / worker_done) 로 전환. Shell wrapper 가 아니라 Orca 가 본격 orchestration 책임.
+
+#### 4.1 교체되는 것 vs 유지되는 것
+
+| 구성 | Phase 3 | Phase 4 |
+|------|---------|---------|
+| worker spawn | `scripts/agents/*.sh` + `orca agent launch` | `orca orchestration worker-start --spec --agent` |
+| preamble | 자체 `_bootstrap-prompt.sh` + argv 주입 | **Orca 가 자동 주입** (Task+Dispatch ID 포함) |
+| 다음 역할 전환 | agent 가 self-호출 `tasks.sh advance` → spawn | agent 는 `worker_done` 만, Coordinator 가 다음 `worker-start` |
+| Coordinator 역할 | Slack 폴링만, 자동 체인에 무관 | `check --wait` 로 메일박스 소비, 다음 worker 디스패치 |
+| chat log | `chat.sh` JSONL + Slack 미러 | `orchestration send/reply` + Slack 미러 (JSONL 선택적 유지) |
+| handles 파일 | 수동 관리 | Orca Run 이 state |
+| self-advance 체인 | 매번 깨짐 | 없음 (agent 는 작업+worker_done 만) |
+
+**유지되는 자산** (프로젝트 레이어):
+- `.harness/roles/*.md` — 역할 지침 (worker spec 재료)
+- `.harness/requests/*.md` — User Request 문서
+- `.harness/tasks/<id>-<slug>.md` — task spec + 역할별 섹션 누적
+- `.harness/templates/*` — task.md / user-request.md 템플릿
+- git worktree 생성 (orchestration 과 독립)
+- Slack 어댑터 (`send.sh` / `listen.sh`)
+
+#### 4.2 Agent 지원 범위 (Orca 네이티브 리스트 기준)
+
+**worker-start --agent 네이티브 지원**: `claude, codex, cursor, antigravity, muse, zcode, opencode, opencode2`
+
+**비네이티브 (kiro 등)**:
+- `orca terminal create --command "kiro-cli chat ..."` 로 터미널 띄움
+- `worker-start --terminal <handle>` 로 등록 (preamble 주입은 agent 가 chat 안에서 받음)
+- 안정성 떨어지므로 **experimental** 로 명시, **기본값은 claude**
+
+#### 4.3 Coordinator 흐름
+
+```
+# scripts/coord.sh — 재작성
+coord_init:
+  resolve_cli → bind Run (per-task) or coordinator Run
+  state_load (active_tasks 로부터 복원)
+
+coord_main_loop:
+  while true:
+    msg = orca orchestration check \
+          --wait --types "worker_done,question,escalation" \
+          --timeout-ms 900000 --json
+    switch msg.type:
+      worker_done:
+        task = lookup_by_dispatch(msg.dispatch_id)
+        next_role = next_in_required_roles(task.current_role)
+        if next_role:
+          launch_worker(task, next_role)
+        else:
+          # 모든 역할 완료 — reviewer 가 user 승인 받고 merge 호출한 상태
+          mark_task_merged(task)
+      question:
+        slack_post(task.thread, msg.body + "답: 이 스레드 reply")
+        store_pending_question(task, msg.id)
+      escalation:
+        slack_post_urgent(task, msg)
+    orca orchestration ack --id <msg.delivery_id>
+    state_save
+```
+
+#### 4.4 Worker (agent 세션) 흐름 (preamble 지시대로)
+
+```
+# Orca 가 agent 세션에 자동 주입하는 preamble (요약):
+#  - Task ID / Dispatch ID
+#  - 사용 가능 명령: worker_done, ask, heartbeat, check (follow-up)
+#  - 세션 종료 조건: worker_done 호출 후
+
+agent 작업 흐름:
+  1. role.sh 로 컨텍스트 로드 (지침, task.md, chat log, PRD)
+  2. 역할 지침대로 작업 + 커밋
+  3. User 질문 필요 시: orca orchestration ask --body "<Q>"
+     → coordinator 가 answer 받아 전달
+  4. 작업 완료 시:
+     orca orchestration worker-done \
+       --task <id> --dispatch <id> \
+       --outcome succeeded|failed \
+       --summary "..." --files-modified "..." --report-path <task.md>
+  5. 세션 종료 (자동)
+
+# 중요: self-advance 호출 없음. 다음 worker 는 coordinator 책임.
+```
+
+#### 4.5 신규 / 재작성 파일
+
+**신규**:
+- `.harness/COORDINATOR.md` — Coordinator 운영 규칙 (check 루프, 재시작 복구, pause-point, Slack ↔ Orchestration 매핑)
+
+**재작성 (완전 교체)**:
+- `scripts/coord.sh` — orchestration check-wait 루프
+- `scripts/tasks.sh new` — run-create + 첫 worker-start (planner)
+- `scripts/agents/_bootstrap-prompt.sh` — worker_done 패턴
+- `.harness/roles/*.md` 8개 — advance 지시 전부 → worker_done 지시로
+
+**제거/비활성화**:
+- `scripts/tasks.sh advance` — orchestration 이 대체 (호환 wrapper 로 당분간 유지하되 deprecated)
+- `scripts/orca/spawn.sh` — orchestration worker-start 가 대체
+- `scripts/agents/claude.sh` / `codex.sh` / `kiro.sh` — worker-start 가 통합 (얇은 wrapper 로 축소 가능)
+
+**유지 + 리팩터**:
+- `scripts/tasks.sh merge` — reviewer 가 user 승인 받고 호출 (그대로)
+- `scripts/tasks.sh rework` — orchestration 과 독립 (유지)
+- `scripts/tasks.sh drop` — git/orca cleanup 추가 (worker-abandon 호출)
+- `scripts/chat.sh` — Slack 미러 유지, orchestration send 와 병행
+
+#### 4.6 Phase 4 서브태스크 (TaskCreate 로 추적)
+
+| ID | 내용 | 상태 |
+|----|------|------|
+| 28 | T013 drop + cleanup | ✅ 완료 |
+| 29 | Phase 4 설계 (이 문서) | 진행 중 |
+| 30 | `.harness/COORDINATOR.md` 작성 | pending |
+| 31 | `coord.sh` 재작성 (check-wait 루프) | pending |
+| 32 | `tasks.sh new` orchestration 전환 | pending |
+| 33 | `bootstrap-prompt` 재작성 (worker_done) | pending |
+| 34 | role.md 8개 업데이트 | pending |
+| 35 | end-to-end 검증 + README 갱신 | pending |
+
+#### 4.7 사용자 결정 필요 (설계 마무리 전)
+
+1. **Agent 기본값**: claude (안정) vs kiro (사용자 요청) — **추천: claude 기본, kiro experimental**
+2. **chat.sh 유지 여부**: orchestration send/check 와 병행 vs 완전 교체 — **추천: 병행 (Slack 미러 가치 유지)**
+3. **advance 명령**: deprecated wrapper (호환성) vs 완전 제거 — **추천: 완전 제거 (혼동 방지)**
+4. **Coordinator 세션 수명**: 세션당 1 Run 유지 vs 매 task 당 1 Run — **추천: task 당 1 Run** (재시작 쉬움)
+
+---
+
+### Phase 5 (추후, 선택) — 관측 레이어
 
 - user용 tmux 모니터링 레이아웃 (chat tail + board watch + orca worker status)
 - `.harness/dashboard.md` 자동 갱신 훅
