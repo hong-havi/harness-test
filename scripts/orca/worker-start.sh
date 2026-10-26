@@ -119,8 +119,7 @@ else
     --json 2>&1)" || true
   echo "$REG" | tail -10
 
-  # Task/Dispatch ID 추출 (worker-done 호출에 필요)
-  local orch_task_id orch_dispatch_id
+  # Task/Dispatch ID 추출 (worker-done 호출에 필요) — 스크립트 main 이라 local 불가
   orch_task_id="$(echo "$REG" | grep -oE '"taskId":[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
   orch_dispatch_id="$(echo "$REG" | grep -oE '"dispatchId":[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
 
