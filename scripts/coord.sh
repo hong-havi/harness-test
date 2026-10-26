@@ -92,10 +92,11 @@ handle_orchestration_msg() {
   local msg_json="$1"
   local msg_type delivery_id task_id dispatch_id outcome summary
 
-  msg_type="$(echo "$msg_json" | awk -F'"' '/"type":/{print $4; exit}')"
-  delivery_id="$(echo "$msg_json" | awk -F'"' '/"deliveryId":/{print $4; exit}')"
-  task_id="$(echo "$msg_json" | awk -F'"' '/"taskId":/{print $4; exit}')"
-  dispatch_id="$(echo "$msg_json" | awk -F'"' '/"dispatchId":/{print $4; exit}')"
+  msg_type="$(echo "$msg_json" | grep -oE '"type":[[:space:]]*"[a-z_]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+  delivery_id="$(echo "$msg_json" | grep -oE '"deliveryId":[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+  # task-id/dispatch-id 는 payload JSON string 안에 있음 ("payload":"{\"taskId\":\"...\",\"dispatchId\":\"...\"}")
+  task_id="$(echo "$msg_json" | grep -oE '\\"taskId\\":[[:space:]]*\\"[^\\]+\\"' | head -1 | sed -E 's/.*\\"([^\\]+)\\".*/\1/')"
+  dispatch_id="$(echo "$msg_json" | grep -oE '\\"dispatchId\\":[[:space:]]*\\"[^\\]+\\"' | head -1 | sed -E 's/.*\\"([^\\]+)\\".*/\1/')"
 
   info "message type=$msg_type task=$task_id dispatch=$dispatch_id delivery=$delivery_id"
 
@@ -361,18 +362,19 @@ poll_slack() {
 # Main
 # ─────────────────────────────────────────────────────────────
 cmd_start() {
-  local lockfile="$COORD_DIR/coord.pid"
-  if [[ -f "$lockfile" ]]; then
+  # lockfile 을 전역으로 (trap 에서 참조하므로 함수 범위 벗어나도 유효해야)
+  LOCKFILE="$COORD_DIR/coord.pid"
+  if [[ -f "$LOCKFILE" ]]; then
     local old_pid
-    old_pid="$(cat "$lockfile" 2>/dev/null || echo 0)"
+    old_pid="$(cat "$LOCKFILE" 2>/dev/null || echo 0)"
     if [[ -n "$old_pid" && "$old_pid" -gt 0 ]] && kill -0 "$old_pid" 2>/dev/null; then
       die "coord 이미 실행 중 (PID $old_pid). 'coord.sh stop' 후 재시작."
     fi
     info "stale lock 제거 (PID $old_pid)"
-    rm -f "$lockfile"
+    rm -f "$LOCKFILE"
   fi
-  echo "$$" > "$lockfile"
-  trap 'rm -f "$lockfile"; exit 0' INT TERM EXIT
+  echo "$$" > "$LOCKFILE"
+  trap 'rm -f "${LOCKFILE:-}"; exit 0' INT TERM EXIT
 
   state_init
   info "Phase 4 Coordinator 시작 (PID $$, check_timeout=${CHECK_TIMEOUT_MS}ms)"
@@ -405,16 +407,16 @@ cmd_start() {
 }
 
 cmd_stop() {
-  local lockfile="$COORD_DIR/coord.pid"
-  [[ -f "$lockfile" ]] || { echo "lock 없음"; return; }
+  LOCKFILE="$COORD_DIR/coord.pid"
+  [[ -f "$LOCKFILE" ]] || { echo "lock 없음"; return; }
   local pid
-  pid="$(cat "$lockfile")"
+  pid="$(cat "$LOCKFILE")"
   if kill -0 "$pid" 2>/dev/null; then
     kill "$pid" && echo "coord PID $pid 종료 요청"; sleep 1
   else
     echo "stale PID $pid"
   fi
-  rm -f "$lockfile"
+  rm -f "$LOCKFILE"
 }
 
 cmd_status() {
