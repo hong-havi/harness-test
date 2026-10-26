@@ -39,12 +39,8 @@ cat <<EOF
 
    **긴 리포트 (여러 섹션/bullet) 는 반드시 \`--from <file>\` 사용** — argv 로 넘기면 쉘 escape 로 뉴라인 손실됨:
    \`\`\`
-   cat > /tmp/deliver-${TASK_ID}.md << 'EOF'
-   ✅ ${ROLE} 작업 완료 (task ${TASK_ID})
-
-   ## 요약
-   • ...
-   EOF
+   # 임시 파일에 리포트 작성 (printf 또는 editor 사용)
+   printf '✅ ${ROLE} 작업 완료 (task ${TASK_ID})\n\n## 요약\n• ...\n' > /tmp/deliver-${TASK_ID}.md
    ./scripts/chat.sh append ${TASK_ID} ${ROLE} coordinator deliver --from /tmp/deliver-${TASK_ID}.md
    rm -f /tmp/deliver-${TASK_ID}.md
    \`\`\`
@@ -143,13 +139,10 @@ PRD 모호, 결정 필요, 추가 데이터 요청 등 user 답이 필요한 경
 
    **긴 질문(한 줄 넘거나 여러 Q)** 은 argv 가 공백/따옴표에서 잘릴 수 있으니 **임시 파일 + --from** 사용:
    \`\`\`
-   cat > /tmp/q.txt << 'EOF'
-   Q1. ... A. ... B. ...
-   Q2. ... A. ... B. ...
-   EOF
+   printf 'Q1. ... A. ... B. ...\nQ2. ... A. ... B. ...\n' > /tmp/q.txt
    ./scripts/chat.sh append ${TASK_ID} ${ROLE} user question --from /tmp/q.txt
+   rm -f /tmp/q.txt
    \`\`\`
-   그 후 \`rm -f /tmp/q.txt\`.
 
 2. 여러 결정이 필요하면 **하나의 chat.sh question 호출에 Q1/Q2/Q3 로 묶어 전송** (여러 번 보내지 말 것).
 
