@@ -540,18 +540,24 @@ cmd_advance() {
       fi
     fi
 
-    # Spawn 재시도 (최대 2회, 사이 2초 대기)
-    info "다음 agent 를 자동으로 spawn 합니다..."
-    local attempt=0 spawn_ok=0
-    while [[ $attempt -lt 2 ]]; do
-      attempt=$((attempt+1))
-      if "$SCRIPT_DIR/orca/spawn.sh" "$id" "$next" 2>&1; then
-        spawn_ok=1
-        break
+    # Spawn 을 **background 로 분리** 실행 — 호출한 agent 세션(kiro-cli 등)이
+    # 종료되어도 spawn.sh 가 끝까지 완주하도록 nohup + disown.
+    # 로그는 /tmp/spawn-<id>-<next>.log 에 보존 (디버깅용).
+    local spawn_log="/tmp/spawn-${id}-${next}.log"
+    rm -f "$spawn_log"
+    info "다음 agent 를 자동으로 spawn 합니다 (background, log=$spawn_log)..."
+    # setsid + nohup 조합: 세션 리더로 분리해 parent 종료 무관
+    (
+      if command -v setsid >/dev/null 2>&1; then
+        setsid nohup "$SCRIPT_DIR/orca/spawn.sh" "$id" "$next" > "$spawn_log" 2>&1 < /dev/null &
+      else
+        nohup "$SCRIPT_DIR/orca/spawn.sh" "$id" "$next" > "$spawn_log" 2>&1 < /dev/null &
       fi
-      info "⚠ spawn attempt $attempt 실패"
-      [[ $attempt -lt 2 ]] && { info "  2초 후 재시도..."; sleep 2; }
-    done
+      disown
+    ) || true
+    # background 로 던졌으므로 성공 여부는 즉시 확인 불가 — 로그로 사후 확인
+    local spawn_ok=1
+    info "  spawn 명령 발사 완료 (상태는 .harness/chat/${id}.handles 또는 Orca 터미널 목록에서 확인)"
 
     if [[ $spawn_ok -eq 0 ]]; then
       local err_msg
