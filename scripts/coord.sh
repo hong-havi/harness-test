@@ -9,7 +9,8 @@
 #
 # 참조: .harness/COORDINATOR.md
 
-set -euo pipefail
+set -uo pipefail
+# set -e 는 의도적으로 제외 — orchestration 호출 중 non-fatal 에러에 전체 종료 방지
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

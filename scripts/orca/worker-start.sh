@@ -152,8 +152,8 @@ fi
 
 [[ -n "$HANDLE" ]] || die "worker 시작 실패 — handle 없음"
 
-# handles 기록
+# handles 기록 — dispatch_id/task_id 포함 (Coordinator lookup 용)
 mkdir -p "$MAIN_REPO_ROOT/.harness/chat"
-echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"$ROLE\",\"agent\":\"$AGENT\",\"handle\":\"$HANDLE\",\"run_id\":\"$RUN_ID\"}" \
+echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"$ROLE\",\"agent\":\"$AGENT\",\"handle\":\"$HANDLE\",\"run_id\":\"$RUN_ID\",\"task_id\":\"${orch_task_id:-}\",\"dispatch_id\":\"${orch_dispatch_id:-}\"}" \
   >> "$MAIN_REPO_ROOT/.harness/chat/${TASK_ID}.handles"
 echo "✓ worker 시작 완료 ($ROLE / $AGENT), handle=$HANDLE"
