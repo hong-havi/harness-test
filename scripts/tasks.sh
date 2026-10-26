@@ -70,10 +70,8 @@ Commands:
                                 --agent: 모든 역할의 기본 agent (default: HARNESS_DEFAULT_AGENT
                                          env 또는 claude). 지원: claude, codex, kiro.
   list                          Show active tasks
-  advance [task-id] [--outcome succeeded|failed]
-                                Move current_role to next, auto-spawn 다음 agent.
-                                qa/reviewer 는 --outcome 필수, 그 외는 커밋 유무로 추론.
-                                --outcome failed 는 커서 이동 안 함 (rework 필요).
+  advance   ⚠ 제거됨 (Phase 4) — agent 는 'orca orchestration worker-done' 호출 필요.
+                                  자동 체인은 Coordinator (coord.sh) 가 담당.
   rework <task-id> <role>       current_role 을 지정 역할로 되돌리고 그 agent 재 spawn.
                                 QA/reviewer fail 판정 후 담당 역할(backend/frontend)로.
   merge [task-id]               Rebase + ff-only merge to main + cleanup
@@ -378,13 +376,30 @@ cmd_new() {
     info "완료 (--no-spawn). 다음 단계 수동:"
     info "  cd $wt_rel"
     info "  ./scripts/role.sh planner"
-  else
-    info "완료. planner agent 를 자동으로 spawn 합니다..."
-    "$SCRIPT_DIR/orca/spawn.sh" "$id" planner || {
-      info "⚠ spawn 실패. 수동으로 진행:"
-      info "  cd $wt_rel && ./scripts/role.sh planner"
-    }
+    return 0
   fi
+
+  # Phase 4: orca orchestration run-create + 첫 worker-start (planner)
+  info "orchestration Run 생성 + planner worker 시작..."
+  local run_json run_id
+  run_json="$(orca orchestration run-create \
+    --objective "Task $id ($slug): $description" \
+    --json 2>&1)"
+  run_id="$(echo "$run_json" | awk -F'"' '/"runId":/{print $4; exit}')"
+  [[ -n "$run_id" ]] || { info "⚠ run-create 실패:"; echo "$run_json" | tail -5; return 1; }
+  info "  run_id=$run_id"
+
+  # run_id 를 task.md frontmatter 에 기록 — Coordinator 가 참조
+  sed -i.bak "s|^role_history: .*|role_history: []\\nrun_id: $run_id|" "$task_abs" 2>/dev/null \
+    || info "  (run_id 저장 생략 — task.md frontmatter 수동 추가 가능)"
+  rm -f "$task_abs.bak"
+
+  # worker-start 로 planner spawn (preamble 자동 주입)
+  "$SCRIPT_DIR/orca/worker-start.sh" "$id" planner "$wt_abs" "$agent" "$run_id" "$description" || {
+    info "⚠ worker-start 실패. Coordinator 가 확인 필요."
+    return 1
+  }
+  info "완료. Coordinator 가 체인 진행 중."
 }
 
 cmd_list() {
@@ -792,7 +807,7 @@ shift || true
 case "$cmd" in
   new)      cmd_new "$@" ;;
   list)     cmd_list "$@" ;;
-  advance)  cmd_advance "$@" ;;
+  advance)  die "advance 명령은 Phase 4 에서 완전히 제거됐습니다. agent 는 orca orchestration worker-done 을 호출해야 합니다. 자세히는 .harness/COORDINATOR.md 와 bootstrap-prompt 참조." ;;
   rework)   cmd_rework "$@" ;;
   merge)    cmd_merge "$@" ;;
   drop)     cmd_drop "$@" ;;

@@ -193,8 +193,23 @@ task 번호 N 에 대해:
 |-------|------|------|
 | 1 | 코어 뼈대 (수동 작동) — 역할 파일, tasks/role/chat 스크립트 | ✅ 완료 |
 | 2 | Orca 통합 + 에이전트 어댑터 (claude/codex/kiro) | ✅ 완료 |
-| 3 | Slack + Coordinator 자동 dispatch 루프 | 예정 |
-| 4 | (선택) tmux 관측 레이어 | 예정 |
+| 3 | Slack + Coordinator 자동 dispatch 루프 (shell-based) | ✅ 완료 (fragile 발견) |
+| 4 | **Orca orchestration 전환** (worker-start/check-wait) | 🚧 진행 중 |
+| 5 | (선택) tmux 관측 레이어 | 예정 |
+
+## 기본 Agent 교체 위치
+
+Default agent 는 **3군데** 에서 설정 가능 (적용 우선순위: 아래 ↓):
+
+| 위치 | 범위 | 예시 |
+|------|------|------|
+| **`.env`** `HARNESS_DEFAULT_AGENT=<name>` | 전역 기본값 | `kiro` 또는 `claude` |
+| **`tasks.sh new --agent <name>`** / Slack `new <slug> --agent <name>` | 특정 task 만 override | `tasks.sh new signup --agent claude` |
+| **`.harness/tasks/<id>-<slug>.md`** 의 `required_roles[].agent` | 특정 역할만 override (수동) | task 생성 후 편집 |
+
+**지원 agent** (Phase 4):
+- 네이티브 (orca orchestration worker-start --agent): `claude`, `codex`, `cursor`, `antigravity`, `muse`, `zcode`, `opencode`, `opencode2`
+- 비네이티브 (experimental): `kiro` — `agent launch` + `terminal send` + `worker-start --terminal` 우회
 
 상세는 [`.harness/WORKPLAN.md`](./.harness/WORKPLAN.md).
 

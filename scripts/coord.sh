@@ -1,20 +1,13 @@
 #!/usr/bin/env bash
-# coord.sh — Coordinator 세션 메인 루프
+# coord.sh — Phase 4: Coordinator 세션
 #
-# Slack #harness-coord 를 polling 하며 봇 멘션 메시지를 분류·디스패치.
-# 상태는 .harness/coord/state.json 에 영속 — 재시작 시 복구.
+# 핵심 변경 (Phase 3 → 4):
+#   - Slack 폴링만 하던 구조 → orca orchestration check --wait 루프
+#   - worker_done 받으면 다음 역할 worker-start 호출 (자동 체인)
+#   - question/escalation 은 Slack 포스트
+#   - Slack 명령은 짧은 subcycle 로 처리
 #
-# 명령:
-#   coord.sh start            # 메인 루프 (foreground, Ctrl+C 로 종료)
-#   coord.sh step             # 1회 iteration (디버깅용)
-#   coord.sh status           # state.json 요약
-#
-# 봇에게 전달하는 Slack 명령 포맷 (user 가 @harnessbot 멘션 후):
-#   new <slug>                — 새 task 생성 + planner 자동 spawn
-#   advance <task-id>          — 다음 역할로 전환
-#   advance <task-id> succeeded|failed  — outcome 명시 (qa/reviewer)
-#   status                     — 활성 task 목록
-#   help                       — 이 안내
+# 참조: .harness/COORDINATOR.md
 
 set -euo pipefail
 
@@ -25,7 +18,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COORD_DIR="$REPO_ROOT/.harness/coord"
 STATE_FILE="$COORD_DIR/state.json"
 DECISIONS_FILE="$COORD_DIR/decisions.jsonl"
-POLL_INTERVAL="${COORD_POLL_INTERVAL:-10}"   # seconds
+POLL_SLACK_EVERY="${COORD_SLACK_POLL_INTERVAL:-15}"   # seconds, check 사이에
+CHECK_TIMEOUT_MS="${COORD_CHECK_TIMEOUT_MS:-30000}"   # 30s per cycle
 
 mkdir -p "$COORD_DIR"
 
@@ -36,31 +30,35 @@ log_decision() {
   echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event\":\"$event\",\"body\":\"$body\"}" >> "$DECISIONS_FILE"
 }
 
-# ─────────────────────────────────────────────────────────────────────
-# State 조작 (python 으로 atomic 쓰기)
-# ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# State 조작
+# ─────────────────────────────────────────────────────────────
 state_init() {
   if [[ ! -f "$STATE_FILE" ]]; then
     cat > "$STATE_FILE" <<EOF
 {
-  "schema": 1,
+  "schema": 2,
   "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "slack_cursor": "0",
   "active_tasks": [],
   "inbox": []
 }
 EOF
-    info "fresh state.json 생성"
+    info "fresh state.json 생성 (schema v2)"
   else
     info "state.json 로드"
   fi
 }
 
 state_get() {
-  # STATE 와 KEY 를 env 로 전달 (bash 가 msys /d/ 를 python 에 넘길 때 fail — cygpath 로 변환)
   local pf="$STATE_FILE"
   command -v cygpath >/dev/null 2>&1 && pf="$(cygpath -m "$pf")"
-  STATE="$pf" KEY="$1" PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "import json,os; print(json.load(open(os.environ['STATE'])).get(os.environ['KEY'], ''))"
+  STATE="$pf" KEY="$1" PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python -c "
+import json, os
+d = json.load(open(os.environ['STATE']))
+v = d.get(os.environ['KEY'], '')
+print(v if not isinstance(v, (list,dict)) else json.dumps(v, ensure_ascii=False))
+"
 }
 
 state_set_cursor() {
@@ -79,60 +77,182 @@ os.replace(tmp, p)
 "
 }
 
-# ─────────────────────────────────────────────────────────────────────
-# Slack 응답 유틸
-# ─────────────────────────────────────────────────────────────────────
 reply() {
   local body="$1"
   "$SCRIPT_DIR/slack/send.sh" --text "$body" >/dev/null 2>&1 || true
 }
 
-# ─────────────────────────────────────────────────────────────────────
-# 명령 디스패치
-# ─────────────────────────────────────────────────────────────────────
-# 입력: user_text (봇 멘션 제거된 명령부)
-# 수행 후 Slack 에 결과 응답
+# ─────────────────────────────────────────────────────────────
+# 핵심: orchestration 메시지 처리
+# ─────────────────────────────────────────────────────────────
+# worker_done 처리: 다음 역할 worker-start
+# question 처리: Slack 미러 (chat.sh 가 자동으로 함)
+# escalation: Slack 긴급 알림
+handle_orchestration_msg() {
+  local msg_json="$1"
+  local msg_type delivery_id task_id dispatch_id outcome summary
+
+  msg_type="$(echo "$msg_json" | awk -F'"' '/"type":/{print $4; exit}')"
+  delivery_id="$(echo "$msg_json" | awk -F'"' '/"deliveryId":/{print $4; exit}')"
+  task_id="$(echo "$msg_json" | awk -F'"' '/"taskId":/{print $4; exit}')"
+  dispatch_id="$(echo "$msg_json" | awk -F'"' '/"dispatchId":/{print $4; exit}')"
+
+  info "message type=$msg_type task=$task_id dispatch=$dispatch_id delivery=$delivery_id"
+
+  case "$msg_type" in
+    worker_done)
+      outcome="$(echo "$msg_json" | awk -F'"' '/"outcome":/{print $4; exit}')"
+      summary="$(echo "$msg_json" | awk -F'"' '/"summary":/{print $4; exit}')"
+      log_decision "worker_done" "task=$task_id outcome=$outcome summary=${summary:0:100}"
+
+      # task 식별: dispatch_id 로 state 에서 조회 (여기선 간단화 — orca worker-list 로 상호 참조)
+      # 다음 역할 결정 로직을 위해 task.md 를 참조
+      local harness_task_id
+      harness_task_id="$(find_harness_task_by_dispatch "$dispatch_id")"
+      if [[ -z "$harness_task_id" ]]; then
+        info "⚠ dispatch_id → harness task 매핑 실패 (state.json 확인 필요)"
+        return
+      fi
+
+      if [[ "$outcome" == "succeeded" ]]; then
+        advance_to_next_role "$harness_task_id"
+      elif [[ "$outcome" == "failed" ]]; then
+        reply "⚠️ *${harness_task_id}* — ${msg_type} *failed*: ${summary:-no summary}
+사용자 결정 필요. \`rework\` 또는 \`spawn\` 명령으로."
+      fi
+      ;;
+    question)
+      local body
+      body="$(echo "$msg_json" | awk -F'"' '/"body":/{print $4; exit}')"
+      reply "❓ task 질문: ${body:-(empty)}
+이 스레드에 답하면 터미널에 자동 주입됩니다."
+      log_decision "question" "task=$task_id body=${body:0:100}"
+      ;;
+    escalation)
+      reply "🚨 *escalation* task=$task_id: $(echo "$msg_json" | awk -F'"' '/"body":/{print $4; exit}')"
+      log_decision "escalation" "task=$task_id"
+      ;;
+    heartbeat)
+      # 기본은 noop. live 상태 확인에 활용.
+      :
+      ;;
+    *)
+      info "unknown msg type: $msg_type (payload 로그)"
+      ;;
+  esac
+}
+
+# dispatch_id 로 .harness/tasks/*.md 를 뒤져서 T### 찾기
+# (state.json 에 확실한 매핑을 유지하면 더 빠르지만 fallback 구현)
+find_harness_task_by_dispatch() {
+  local disp="$1"
+  grep -l "\"dispatch_id\":\"$disp\"" "$REPO_ROOT"/.harness/chat/T*.handles 2>/dev/null | head -1 | \
+    sed -E 's|.*/T([0-9]+)\.handles|T\1|'
+}
+
+advance_to_next_role() {
+  local tid="$1"
+  info "advance 시도: $tid"
+
+  # live task.md 에서 current_role 다음 역할 조회
+  local live_f main_f slug f
+  main_f="$(find "$REPO_ROOT/.harness/tasks" -maxdepth 1 -name "${tid}-*.md" | head -1)"
+  if [[ -z "$main_f" ]]; then
+    info "⚠ task.md 없음: $tid"
+    return
+  fi
+  slug="$(basename "$main_f" .md)"; slug="${slug#*-}"
+  live_f="$REPO_ROOT/.worktrees/${tid}-${slug}/.harness/tasks/${tid}-${slug}.md"
+  [[ -f "$live_f" ]] || live_f="$main_f"
+  f="$live_f"
+
+  local current next
+  current="$(awk -F': *' '/^current_role:/{print $2; exit}' "$f" | tr -d '"')"
+  # 다음 역할 추출
+  next="$(awk -v cur="$current" '
+    /^required_roles:/ { in_block=1; next }
+    /^[a-zA-Z_]+:/ { in_block=0 }
+    in_block && /^[[:space:]]*#/ { next }
+    in_block && /role:/ {
+      sub(/.*role: */, ""); sub(/,.*/, ""); sub(/[}].*/, ""); gsub(/[[:space:]]/, "")
+      if (found) { print; exit }
+      if ($0 == cur) found=1
+    }
+  ' "$f")"
+
+  if [[ -z "$next" ]]; then
+    info "$tid: 모든 역할 소진. reviewer 가 merge 호출했으면 cleanup."
+    reply "🎉 *${tid}* 모든 역할 완료"
+    return
+  fi
+
+  # current_role 를 next 로 업데이트 + 커밋 (live 쪽)
+  sed -i.bak "s|^current_role: .*|current_role: $next|" "$f" && rm -f "${f}.bak"
+  info "  $tid: $current → $next"
+  reply "🔄 *${tid}*: $current → $next 전환 중..."
+
+  # 다음 role 의 agent 조회
+  local agent
+  agent="$(awk -v r="$next" '
+    /^required_roles:/ { in_block=1; next }
+    /^[a-zA-Z_]+:/ { in_block=0 }
+    in_block && /^[[:space:]]*#/ { next }
+    in_block && /role:/ {
+      line=$0
+      sub(/.*role: */, "", line); r_val=line
+      sub(/,.*/, "", r_val); sub(/[}].*/, "", r_val); gsub(/[[:space:]]/, "", r_val)
+      if (r_val == r) {
+        ag=$0; sub(/.*agent: */, "", ag); sub(/,.*/, "", ag); sub(/[}].*/, "", ag); gsub(/[[:space:]]/, "", ag)
+        print ag; exit
+      }
+    }
+  ' "$f")"
+  [[ -n "$agent" ]] || { info "⚠ next role 의 agent 매핑 없음"; return; }
+
+  # run_id 조회
+  local run_id
+  run_id="$(awk -F': *' '/^run_id:/{print $2; exit}' "$f" | tr -d '"')"
+
+  # worktree 경로
+  local wt_abs="$REPO_ROOT/.worktrees/${tid}-${slug}"
+
+  # worker-start 호출 (background)
+  info "  worker-start $next ($agent)..."
+  local log="/tmp/coord-worker-${tid}-${next}.log"
+  (
+    setsid nohup "$SCRIPT_DIR/orca/worker-start.sh" "$tid" "$next" "$wt_abs" "$agent" "${run_id:-unknown}" "" \
+      > "$log" 2>&1 < /dev/null &
+    disown
+  ) || true
+  info "  spawn 발사됨 (log=$log)"
+  log_decision "next_worker_started" "task=$tid role=$next agent=$agent"
+}
+
+# ─────────────────────────────────────────────────────────────
+# Slack 명령 처리 (Phase 3 와 동일, 부분적 유지)
+# ─────────────────────────────────────────────────────────────
+# (옛 coord.sh 의 handle_command 를 그대로 유지 — new/status/rework/spawn/merge/drop/help)
 handle_command() {
   local user_text="$1"
-  # 멘션 패턴 제거: <@U...> 공백
   local cmd
   cmd="$(echo "$user_text" | sed -E 's|<@[A-Z0-9]+>||g' | sed -E 's|^ +||;s| +$||')"
-
-  info "명령 수신: $cmd"
-  log_decision "command_received" "$cmd"
+  info "slack cmd: $cmd"
 
   case "$cmd" in
-    "" )
-      reply "💬 비어있는 명령. \`help\` 로 사용법 확인."
-      ;;
+    "")       reply "💬 비어있는 명령. \`help\` 확인." ;;
     "help")
-      reply "📘 *하네스 Coordinator 명령*
-\`new <slug> [--agent <name>] [자연어 설명...]\` — 새 task 생성.
-    \`--agent kiro|codex|claude\` 로 모든 역할의 기본 agent 지정 (기본: 환경 default)
-    설명 생략 시 \`.harness/requests/<slug>.md\` 자동 로드
-\`advance <task-id>\` — 다음 역할로 (커밋 유무로 추론)
-\`advance <task-id> succeeded|failed\` — qa/reviewer outcome 명시
-\`rework <task-id> <role>\` — 지정 역할로 되돌리고 재 spawn (fail 복구용)
-\`spawn <task-id> [role]\` — 현재 또는 지정 역할 agent 재 spawn (복구용)
-\`merge <task-id>\` — reviewer 수동 호출 (reviewer agent 가 못했을 때)
-\`drop <task-id>\` — task 폐기 (worktree/브랜치 제거, archive 로 이동)
+      reply "📘 *하네스 Phase 4 Coordinator 명령*
+\`new <slug> [--agent kiro|claude|codex] [자연어 설명]\` — 새 task (orchestration Run 생성 + planner 시작)
 \`status\` — 활성 task 목록
+\`rework <task-id> <role>\` — 지정 역할로 되돌리고 새 worker 시작
+\`spawn <task-id> [role]\` — 수동 재 spawn (복구)
+\`merge <task-id>\` — reviewer 승인 후 user 가 직접 호출
+\`drop <task-id>\` — task 폐기 (worker-abandon + cleanup)
 \`help\` — 이 안내
 
-👥 *역할 (8개)* — task 당 planner 가 \`required_roles\` 로 선언
-• \`coordinator\` — user 유일 접점. dispatch·리포팅 (저 입니다)
-• \`planner\` — 요구를 명세로 분해 + required_roles 지정
-• \`architect\` — 엔티티/API 계약·보안 설계
-• \`designer\` — Figma MCP + apps/web 코드 뼈대 (UI 필요 시)
-• \`backend\` — apps/api 구현 + DB 핸들
-• \`frontend\` — apps/web 구현
-• \`qa\` — docker up + 수용 기준 전수 UAT (fail → rework)
-• \`reviewer\` — 보안/누수/성능 리뷰 + rebase + ff-only merge
+👥 *역할*: planner → architect → [designer?] → backend → frontend → qa → reviewer → merged (자동 체인)
 
-🔄 *진행 흐름* (자동 체인)
-\`planner → architect → [designer?] → backend → frontend → qa → reviewer → merged\`
-
-ℹ️ 각 역할의 상세 지침은 \`.harness/roles/<role>.md\`"
+Phase 4 변경: agent 는 \`orca orchestration worker-done\` 호출. advance 명령 제거됨."
       ;;
     "status")
       local out
@@ -144,7 +264,6 @@ $out
       ;;
     "new "*)
       local rest="${cmd#new }"
-      # --agent <name> 추출 (어디에 있든)
       local agent_opt=""
       if [[ "$rest" =~ --agent[[:space:]]+([a-zA-Z0-9_-]+) ]]; then
         agent_opt="${BASH_REMATCH[1]}"
@@ -152,48 +271,23 @@ $out
       fi
       local slug description
       slug="$(echo "$rest" | awk '{print $1}')"
-      description="$(echo "$rest" | awk '{for(i=2;i<=NF;i++) printf "%s%s", (i>2?" ":""), $i; print ""}' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
-      [[ -n "$slug" ]] || { reply "⚠ slug 없음. 예: \`new remember-me --agent kiro 설명...\`"; return; }
-      local out ok=0
-      local extra_args=()
-      [[ -n "$agent_opt" ]] && extra_args+=(--agent "$agent_opt")
+      description="$(echo "$rest" | awk '{for(i=2;i<=NF;i++) printf "%s%s", (i>2?" ":""), $i}' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
+      [[ -n "$slug" ]] || { reply "⚠ 사용법: \`new <slug> [--agent ...] [설명]\`"; return; }
+      local extra=() out ok=0
+      [[ -n "$agent_opt" ]] && extra+=(--agent "$agent_opt")
       if [[ -n "$description" ]]; then
-        out="$("$SCRIPT_DIR/tasks.sh" new "$slug" "${extra_args[@]}" "$description" 2>&1)" && ok=1
+        out="$("$SCRIPT_DIR/tasks.sh" new "$slug" "${extra[@]}" "$description" 2>&1)" && ok=1
       else
-        out="$("$SCRIPT_DIR/tasks.sh" new "$slug" "${extra_args[@]}" 2>&1)" && ok=1
+        out="$("$SCRIPT_DIR/tasks.sh" new "$slug" "${extra[@]}" 2>&1)" && ok=1
       fi
       if [[ $ok -eq 1 ]]; then
-        reply "✅ *task 생성 완료* (\`$slug\`)${agent_opt:+ 🤖 agent=\`$agent_opt\`}${description:+
-> $description}
+        reply "✅ *task 생성* \`$slug\`${agent_opt:+ (agent=$agent_opt)}
 \`\`\`
-$(echo "$out" | tail -12)
+$(echo "$out" | tail -8)
 \`\`\`"
-        log_decision "task_created" "$slug${agent_opt:+ agent=$agent_opt}${description:+ — $description}"
+        log_decision "task_created" "$slug agent=${agent_opt:-default}"
       else
-        reply "❌ task 생성 실패:
-\`\`\`
-$out
-\`\`\`"
-      fi
-      ;;
-    "advance "*)
-      local args="${cmd#advance }"
-      # args: "<task-id>" 또는 "<task-id> succeeded|failed"
-      local tid outcome=""
-      tid="$(echo "$args" | awk '{print $1}')"
-      outcome="$(echo "$args" | awk '{print $2}')"
-      [[ -n "$tid" ]] || { reply "⚠ task-id 없음. 예: \`advance T001\`"; return; }
-      local out
-      local flags=()
-      [[ -n "$outcome" ]] && flags+=(--outcome "$outcome")
-      if out="$("$SCRIPT_DIR/tasks.sh" advance "$tid" "${flags[@]}" 2>&1)"; then
-        reply "✅ *advance $tid* ${outcome:+(outcome=$outcome)}
-\`\`\`
-$(echo "$out" | tail -15)
-\`\`\`"
-        log_decision "task_advanced" "$tid ${outcome:-auto}"
-      else
-        reply "❌ advance 실패:
+        reply "❌ 실패:
 \`\`\`
 $out
 \`\`\`"
@@ -204,14 +298,10 @@ $out
       local tid trole
       tid="$(echo "$args" | awk '{print $1}')"
       trole="$(echo "$args" | awk '{print $2}')"
-      [[ -n "$tid" && -n "$trole" ]] || { reply "⚠ 사용법: \`rework <task-id> <role>\` (예: \`rework T003 frontend\`)"; return; }
+      [[ -n "$tid" && -n "$trole" ]] || { reply "⚠ 사용법: \`rework <task-id> <role>\`"; return; }
       local out
       if out="$("$SCRIPT_DIR/tasks.sh" rework "$tid" "$trole" 2>&1)"; then
-        reply "🔄 *rework $tid → $trole*
-\`\`\`
-$(echo "$out" | tail -15)
-\`\`\`"
-        log_decision "task_rework" "$tid → $trole"
+        reply "🔄 rework $tid → $trole 완료"
       else
         reply "❌ rework 실패:
 \`\`\`
@@ -220,36 +310,19 @@ $out
       fi
       ;;
     "spawn "*)
-      local args="${cmd#spawn }"
-      local tid trole
+      local args="${cmd#spawn }" tid trole
       tid="$(echo "$args" | awk '{print $1}')"
       trole="$(echo "$args" | awk '{print $2}')"
-      [[ -n "$tid" ]] || { reply "⚠ 사용법: \`spawn <task-id> [role]\` (role 생략시 현재 current_role 사용)"; return; }
-      local out
-      if out="$("$SCRIPT_DIR/tasks.sh" spawn "$tid" "$trole" 2>&1)"; then
-        reply "🚀 *spawn $tid${trole:+ $trole}*
-\`\`\`
-$(echo "$out" | tail -8)
-\`\`\`"
-        log_decision "task_spawn" "$tid ${trole:-current}"
-      else
-        reply "❌ spawn 실패:
-\`\`\`
-$out
-\`\`\`"
-      fi
+      [[ -n "$tid" ]] || { reply "⚠ 사용법: \`spawn <task-id> [role]\`"; return; }
+      "$SCRIPT_DIR/tasks.sh" spawn "$tid" "$trole" >/dev/null 2>&1 \
+        && reply "🚀 spawn $tid${trole:+ $trole}" \
+        || reply "❌ spawn 실패"
       ;;
     "merge "*)
-      local tid="${cmd#merge }"
-      tid="$(echo "$tid" | awk '{print $1}')"
-      [[ -n "$tid" ]] || { reply "⚠ 사용법: \`merge <task-id>\`"; return; }
+      local tid="${cmd#merge }"; tid="$(echo "$tid" | awk '{print $1}')"
       local out
       if out="$("$SCRIPT_DIR/tasks.sh" merge "$tid" 2>&1)"; then
-        reply "🎉 *merged $tid*
-\`\`\`
-$(echo "$out" | tail -20)
-\`\`\`"
-        log_decision "task_merged" "$tid"
+        reply "🎉 merged $tid"
       else
         reply "❌ merge 실패:
 \`\`\`
@@ -258,180 +331,111 @@ $out
       fi
       ;;
     "drop "*)
-      local tid="${cmd#drop }"
-      tid="$(echo "$tid" | awk '{print $1}')"
-      [[ -n "$tid" ]] || { reply "⚠ 사용법: \`drop <task-id>\` (즉시 폐기, 되돌릴 수 없음)"; return; }
-      local out
-      if out="$("$SCRIPT_DIR/tasks.sh" drop "$tid" --yes 2>&1)"; then
-        reply "🗑️ *dropped $tid*
-\`\`\`
-$(echo "$out" | tail -10)
-\`\`\`"
-        log_decision "task_dropped" "$tid"
+      local tid="${cmd#drop }"; tid="$(echo "$tid" | awk '{print $1}')"
+      if "$SCRIPT_DIR/tasks.sh" drop "$tid" --yes >/dev/null 2>&1; then
+        reply "🗑️ dropped $tid"
       else
-        reply "❌ drop 실패:
-\`\`\`
-$out
-\`\`\`"
+        reply "❌ drop 실패"
       fi
       ;;
-    *)
-      reply "⚠ 알 수 없는 명령: \`$cmd\`
-\`help\` 로 사용법 확인."
-      ;;
+    *) reply "⚠ 알 수 없는 명령: \`$cmd\` (\`help\`)" ;;
   esac
 }
 
-# ─────────────────────────────────────────────────────────────────────
-# task 의 활성(마지막) agent 터미널 handle 조회 — .harness/chat/<id>.handles 마지막 줄
-# ─────────────────────────────────────────────────────────────────────
-active_terminal_for_task() {
-  local id="$1"
-  local hf="$REPO_ROOT/.harness/chat/${id}.handles"
-  [[ -f "$hf" ]] || return 1
-  tail -1 "$hf" | awk -F'"handle":"' '{print $2}' | awk -F'"' '{print $1}'
-}
-
-# ─────────────────────────────────────────────────────────────────────
-# 활성 task 들의 Slack 스레드 reply 를 폴링 → 해당 agent 터미널에 주입
-# ─────────────────────────────────────────────────────────────────────
-poll_task_threads() {
-  shopt -s nullglob
-  for slack_file in "$REPO_ROOT"/.harness/chat/T[0-9][0-9][0-9].slack; do
-    local id thread_ts cursor_file cursor
-    id="$(basename "$slack_file" .slack)"
-    thread_ts="$(cat "$slack_file")"
-    cursor_file="$COORD_DIR/thread-cursor-${id}.txt"
-    cursor="$thread_ts"
-    [[ -f "$cursor_file" ]] && cursor="$(cat "$cursor_file")"
-
-    local last_processed="$cursor"
-    while IFS=$'\t' read -r ts user text; do
-      [[ -z "$ts" ]] && continue
-      info "[$id] user reply @ $ts: $(echo "$text" | cut -c1-80)"
-      # 1) chat log 에 answer 로 기록
-      "$SCRIPT_DIR/chat.sh" append "$id" user "coord" answer "$text" >/dev/null 2>&1 || true
-      # 2) 현재 활성 agent 터미널에 주입
-      local handle
-      if handle="$(active_terminal_for_task "$id")" && [[ -n "$handle" ]]; then
-        info "[$id] → agent 터미널 ($handle) 에 주입"
-        orca terminal send --terminal "$handle" --text "$text" --enter --json >/dev/null 2>&1 \
-          || info "[$id] ⚠ terminal send 실패 (handle 만료 가능)"
-      else
-        info "[$id] ⚠ 활성 터미널 없음 — chat log 에만 기록"
-      fi
-      log_decision "thread_reply_relayed" "$id ts=$ts user=$user"
-      last_processed="$ts"
-    done < <("$SCRIPT_DIR/slack/thread-replies.sh" --thread "$thread_ts" --oldest "$cursor" --limit 20)
-
-    if [[ "$last_processed" != "$cursor" ]]; then
-      echo "$last_processed" > "$cursor_file"
-    fi
-  done
-}
-
-# ─────────────────────────────────────────────────────────────────────
-# 1 iteration: top-level 명령 + 스레드 reply 모두 처리
-# ─────────────────────────────────────────────────────────────────────
-run_once() {
+poll_slack() {
   local cursor
   cursor="$(state_get slack_cursor)"
   [[ -z "$cursor" || "$cursor" == "None" ]] && cursor="0"
-
-  # 1) 채널 top-level 메시지 (봇 명령)
   local last_ts="$cursor"
   while IFS=$'\t' read -r ts user text; do
     [[ -z "$ts" ]] && continue
-    info "msg from $user @ $ts: $(echo "$text" | cut -c1-80)"
     handle_command "$text"
     last_ts="$ts"
   done < <("$SCRIPT_DIR/slack/listen.sh" --oldest "$cursor" --limit 20)
-
   if [[ "$last_ts" != "$cursor" ]]; then
     state_set_cursor "$last_ts"
   fi
-
-  # 2) 활성 task 들의 스레드 reply → agent 로 전달
-  poll_task_threads
 }
 
+# ─────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────
 cmd_start() {
-  # PID lock — 중복 실행 방지 (여러 coord 가 돌면 Slack 응답 중복됨)
   local lockfile="$COORD_DIR/coord.pid"
   if [[ -f "$lockfile" ]]; then
     local old_pid
     old_pid="$(cat "$lockfile" 2>/dev/null || echo 0)"
     if [[ -n "$old_pid" && "$old_pid" -gt 0 ]] && kill -0 "$old_pid" 2>/dev/null; then
-      die "coord 이미 실행 중 (PID $old_pid). 'kill $old_pid' 로 종료 후 재시작하거나, coord.sh stop 사용."
+      die "coord 이미 실행 중 (PID $old_pid). 'coord.sh stop' 후 재시작."
     fi
-    info "stale lock 발견 (PID $old_pid 안 돌음) → 제거"
+    info "stale lock 제거 (PID $old_pid)"
     rm -f "$lockfile"
   fi
   echo "$$" > "$lockfile"
   trap 'rm -f "$lockfile"; exit 0' INT TERM EXIT
 
   state_init
-  info "listen 루프 시작 (PID $$, interval=${POLL_INTERVAL}s). Ctrl+C 로 종료."
-  reply "🤖 coordinator 세션 시작 (PID $$) — \`help\` 로 명령 확인"
+  info "Phase 4 Coordinator 시작 (PID $$, check_timeout=${CHECK_TIMEOUT_MS}ms)"
+  reply "🤖 Phase 4 coordinator up (PID $$) — \`help\` 로 명령 확인"
   log_decision "coord_started" "pid=$$"
 
+  local last_slack_poll=0
   while true; do
-    run_once || info "⚠ iteration 실패 (계속)"
-    sleep "$POLL_INTERVAL"
+    # orchestration check (block 함수) — 30초 안에 메시지 또는 timeout
+    local check_resp
+    check_resp="$(orca orchestration check \
+      --wait --types "worker_done,question,escalation,heartbeat" \
+      --timeout-ms "$CHECK_TIMEOUT_MS" --json 2>&1 || true)"
+    # 메시지 있으면 처리, timeout 이면 건너뜀
+    if echo "$check_resp" | grep -q '"type":'; then
+      handle_orchestration_msg "$check_resp"
+      local delivery_id
+      delivery_id="$(echo "$check_resp" | awk -F'"' '/"deliveryId":/{print $4; exit}')"
+      [[ -n "$delivery_id" ]] && orca orchestration check --ack "$delivery_id" --json >/dev/null 2>&1 || true
+    fi
+
+    # Slack 폴링 (매 반복마다 check 이 긴 timeout 가지므로 자연스럽게 interval)
+    local now
+    now=$(date +%s)
+    if (( now - last_slack_poll >= POLL_SLACK_EVERY )); then
+      poll_slack
+      last_slack_poll=$now
+    fi
   done
 }
 
 cmd_stop() {
   local lockfile="$COORD_DIR/coord.pid"
-  [[ -f "$lockfile" ]] || { echo "실행 중인 coord 없음 (lock 파일 없음)"; return; }
+  [[ -f "$lockfile" ]] || { echo "lock 없음"; return; }
   local pid
   pid="$(cat "$lockfile")"
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" && echo "coord PID $pid 종료 요청"
-    sleep 1
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" && echo "coord PID $pid 종료 요청"; sleep 1
   else
-    echo "lock 파일의 PID $pid 가 안 돌고 있음 (stale)"
+    echo "stale PID $pid"
   fi
   rm -f "$lockfile"
 }
 
-cmd_step() {
-  state_init
-  info "단일 iteration 실행"
-  run_once
-}
-
 cmd_status() {
-  if [[ ! -f "$STATE_FILE" ]]; then
-    echo "state.json 없음 — coord 가 아직 시작 안 됨"
-    return
-  fi
-  echo "=== state.json ==="
-  cat "$STATE_FILE"
+  [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" || echo "state.json 없음"
   echo ""
-  echo "=== 최근 결정 (last 10) ==="
+  echo "=== 최근 결정 ==="
   [[ -f "$DECISIONS_FILE" ]] && tail -10 "$DECISIONS_FILE" || echo "(없음)"
 }
 
-sub="${1:-}"
-shift || true
+sub="${1:-}"; shift || true
 case "$sub" in
   start)  cmd_start ;;
   stop)   cmd_stop ;;
-  step)   cmd_step ;;
   status) cmd_status ;;
   ""|-h|--help|help)
     cat <<EOF
-Usage: $0 <start|stop|step|status>
+Usage: $0 <start|stop|status>
 
-start   메인 루프 (foreground). PID lock 으로 중복 실행 방지.
-stop    실행 중인 coord 종료 (lock 파일의 PID kill)
-step    1회 iteration (디버깅)
-status  state.json + decisions.jsonl 요약
-
-Slack 봇 멘션으로 명령 전송 — @harness-bot <command>
-명령: new <slug>, advance <task-id> [succeeded|failed], rework <task-id> <role>, status, help
+Phase 4 — orchestration check-wait 루프 기반 Coordinator.
+자세한 설계는 .harness/COORDINATOR.md 참조.
 EOF
     ;;
-  *) echo "Unknown: $sub" >&2; exit 1 ;;
+  *) echo "Unknown: $sub"; exit 1 ;;
 esac

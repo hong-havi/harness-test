@@ -65,23 +65,19 @@
    - **Blocker**: 반드시 수정. `rework` 로 반려.
    - **Suggest**: 선택 수정. pass 가능.
 3. 결정:
-   - **Blocker 없음** → **merge 하지 말고 사용자 승인 대기**:
+   - **Blocker 없음** → **merge 자동 호출 금지. 사용자 승인 대기** (Phase 4):
      1. "approve for merge" 를 커밋 (리뷰 노트 + task.md Review notes 섹션)
      2. chat `deliver` — 리뷰 결과 요약
-     3. chat `question` 으로 **사용자 배포 승인 요청**:
+     3. **`orca orchestration ask`** 로 사용자 배포 승인 요청:
         ```bash
-        ./scripts/chat.sh append <task-id> reviewer user question "✅ Review pass — 배포 준비 완료
-        - 변경 요약: ...
-        - 변경 파일 N개: ...
-        - 수용 기준 전수 통과
-        - 리뷰 체크리스트 7개 영역 통과
-
-        📦 main 에 merge 할까요? 답: **merge** / **no** (수정 요청)"
+        printf 'Review pass:\n- 변경 N건\n- 체크리스트 전수 통과\n\n📦 main 에 merge 할까요? (merge / no / rework)\n' > /tmp/approve.txt
+        orca orchestration ask --from /tmp/approve.txt
+        rm -f /tmp/approve.txt
         ```
-     4. **대기**. 사용자 답이 터미널에 주입됨.
+     4. **대기**. 사용자 답이 터미널에 자동 주입됨.
      5. 사용자 답에 따라:
-        - **merge / yes / 배포 / ok** → `./scripts/tasks.sh merge` 호출 (rebase + ff-only + cleanup 자동)
-        - **no / 수정 / rework** → `./scripts/tasks.sh rework <task-id> <원담당역할>` (user 가 지정한 역할 또는 가장 최근 구현자)
+        - **merge / yes / 배포 / ok** → `./scripts/tasks.sh merge <task-id>` 호출 (rebase + ff-only + cleanup) → `orca orchestration worker-done --outcome succeeded --summary "merged"`
+        - **no / 수정 / rework** → `orca orchestration worker-done --outcome failed --summary "user rejected: ..."` → Coordinator 가 user 결정 중계
         - 애매하면 다시 question 으로 재질의
    - **Blocker 있음** → chat `handoff` + `./scripts/tasks.sh rework <task-id> <원담당역할>` 호출. 사용자 승인 없이 바로 rework (품질 결정).
 4. 사소한 오타·1-2줄 수정은 reviewer가 직접 커밋 가능 (`T### [reviewer]: typo fix` 식). 그 외는 반려.
