@@ -4,7 +4,7 @@ title: 전역 Header 컴포넌트 — Nav.tsx 를 Header.tsx 로 리네임/정�
 slug: header-login
 branch: task/T025-header-login
 worktree: .worktrees/T025-header-login
-status: planning          # planning | in-flight | paused | merged | dropped
+status: merged
 required_roles:
   - { role: planner,   agent: kiro }
   - { role: frontend,  agent: kiro }
