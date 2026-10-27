@@ -367,10 +367,25 @@ agent 작업 흐름:
 
 ---
 
-### Phase 5 (추후, 선택) — 관측 레이어
+### Phase 4 B 안정화 (2026-10-27 완료)
 
-- user용 tmux 모니터링 레이아웃 (chat tail + board watch + orca worker status)
-- `.harness/dashboard.md` 자동 갱신 훅
+- preamble 에 `task-complete` 수신 시 **Coordinator 메인 루프 종료** 명시 (reviewer merge 완료 후 세션이 영원히 돌지 않도록)
+- `scripts/coord-recover.sh` 신규 — Coordinator 세션 crash 시 재시작 helper
+  - task.md frontmatter 에서 `run_id` + `current_role` + `slug` 복구
+  - handles 마지막 worker 라인에서 agent 복구
+  - 기존 Coordinator 세션 close 후 `coord-launch.sh` 재호출
+  - processed-dispatches 는 유지 → idempotency 가드가 재배포 메시지 skip
+
+### Phase 5 — 관측 레이어 (2026-10-27 완료)
+
+- `scripts/harness-status.sh` 신규 — 전체 하네스 상태 1-shot:
+  - 활성 task 테이블 (`tasks.sh list`)
+  - task 당 세션 handle 과 Orca terminal 생존 여부 (alive/dead 컬러 표시)
+  - processed-dispatches 개수 (idempotency 가드 발동 추적)
+  - 최근 chat (task 당 마지막 3건)
+  - `--kill-orphans` 로 handles 에 없는 harness 터미널 정리
+- `scripts/chat.sh tail <task-id>` 는 **Phase 3 에서 이미 구현** (중복 구현 안 함)
+- `.harness/dashboard.md` 는 보류 — harness-status.sh 로 커버 충분
 
 ---
 

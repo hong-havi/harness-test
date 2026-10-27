@@ -97,10 +97,10 @@ coord-step.sh 가 stdout 에 \`ACTION: ...\` 라인으로 다음에 할 일을 �
 - \`ACTION: ask-user T=... msg='...'\` → \`orca orchestration ask --body "..."\` 로 사용자 결정 요청.
 - \`ACTION: question sender=... body='...'\` → ask 로 사용자 중계 후 \`orca orchestration reply --to <sender> --body "..."\` 로 응답.
 - \`ACTION: escalation ...\` → ask 로 사용자 긴급 알림.
-- \`ACTION: task-complete T=...\` → 사용자에게 완료 리포트, 세션 종료 가능.
+- \`ACTION: task-complete T=...\` → 사용자에게 간단한 완료 리포트(한 줄 요약) 를 응답으로 출력하고 **메인 루프를 종료**. 더 이상 check-wait 호출 금지. Coordinator 세션은 사용자가 \`orca terminal close\` 하거나 \`./scripts/harness-status.sh\` 가 정리합니다.
 - \`ACTION: heartbeat\` 또는 응답 없음 → 그냥 다시 check.
 
-**이 루프를 모든 required_roles 완료까지 반복합니다.**
+**이 루프를 모든 required_roles 완료까지 반복합니다. \`task-complete\` 받으면 루프 즉시 종료.**
 
 ## ⚠️ 매우 중요 — 단일 소비자 원칙 (중복 spawn 방지)
 
