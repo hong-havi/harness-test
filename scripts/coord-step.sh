@@ -408,6 +408,27 @@ cmd="${1:-}"
 case "$cmd" in
   handle)
     msg="${2:?msg JSON required}"
+
+    # Phase 4 P+: timeout / 빈 응답은 조용히 skip (Slack 포스트 X).
+    # check --wait 가 timeout_ms 안에 아무 메시지 못 받으면 result.timedOut:true,
+    # messages:[], count:0, deliveryId:null 반환. 이건 "nothing happened" 신호라
+    # unknown type 으로 처리하면 안 됨 (Slack 노이즈 발생).
+    if echo "$msg" | grep -qE '"timedOut"[[:space:]]*:[[:space:]]*true'; then
+      echo "ACTION: timeout"
+      exit 0
+    fi
+    if echo "$msg" | grep -qE '"count"[[:space:]]*:[[:space:]]*0\b' \
+       && echo "$msg" | grep -qE '"messages"[[:space:]]*:[[:space:]]*\[\s*\]'; then
+      echo "ACTION: timeout (empty messages)"
+      exit 0
+    fi
+    # keepalive/heartbeat frame (streaming) 도 skip
+    if echo "$msg" | grep -qE '"_keepalive"[[:space:]]*:[[:space:]]*true' \
+       || echo "$msg" | grep -qE '"_heartbeat"[[:space:]]*:[[:space:]]*true'; then
+      echo "ACTION: heartbeat (streaming frame)"
+      exit 0
+    fi
+
     type="$(extract_type "$msg")"
     delivery_id="$(extract_delivery_id "$msg")"
     case "$type" in
