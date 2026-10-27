@@ -268,6 +268,57 @@ run_once() {
     echo "$last_ts" > "$CURSOR_FILE"
     log "cursor → $last_ts"
   fi
+
+  # ─────────────────────────────────────────────────────────────
+  # 활성 task 들의 Slack 스레드 polling (스레드 reply 지원)
+  # chat.sh 가 .harness/chat/<id>.slack 에 thread_ts 저장. 그 스레드 안의
+  # user reply 는 봇 멘션 없이도 명령으로 간주 (스레드가 이미 task 컨텍스트).
+  # ─────────────────────────────────────────────────────────────
+  shopt -s nullglob
+  local slack_f tid f st thread_ts tc_file tc reply_msgs last_tc rts ruser rtext body handle
+  for slack_f in "$CHAT_DIR"/*.slack; do
+    tid="$(basename "$slack_f" .slack)"
+    [[ "$tid" =~ ^T[0-9]{3}$ ]] || continue       # 레거시 T007-remember-me.slack skip
+    f="$(find "$TASKS_DIR" -maxdepth 1 -name "${tid}-*.md" | head -1)"
+    [[ -f "$f" ]] || continue
+    st="$(awk '/^status:/{sub("^status: *",""); sub(/[[:space:]]+#.*/,""); print; exit}' "$f")"
+    [[ "$st" == "merged" || "$st" == "dropped" ]] && continue
+
+    thread_ts="$(cat "$slack_f")"
+    tc_file="$COORD_DIR/relay-thread-${tid}.cursor"
+    tc="$(cat "$tc_file" 2>/dev/null || echo "$thread_ts")"
+
+    reply_msgs="$("$SCRIPT_DIR/thread-replies.sh" --thread "$thread_ts" --oldest "$tc" --limit 20 2>/dev/null || true)"
+    [[ -z "$reply_msgs" ]] && continue
+
+    last_tc="$tc"
+    while IFS=$'\t' read -r rts ruser rtext; do
+      [[ -z "$rts" ]] && continue
+      body="$(clean_text "$rtext")"
+      [[ -z "$body" ]] && { last_tc="$rts"; continue; }
+
+      # 메타 명령 (status/help 등) 스레드에서도 처리 — 응답은 같은 스레드
+      if handle_meta_command "$body" "$thread_ts"; then
+        last_tc="$rts"; continue
+      fi
+
+      handle="$(coord_handle_for "$tid")" || handle=""
+      if [[ -z "$handle" ]]; then
+        log "SKIP thread (no coord for $tid)"
+        post_slack "⚠️ $tid Coordinator 세션을 찾지 못함. \`coord-recover.sh $tid\` 필요." "$thread_ts"
+        last_tc="$rts"; continue
+      fi
+      log "RELAY (thread) → $tid handle=${handle:0:20}… body='${body:0:120}'"
+      orca terminal send --terminal "$handle" --text "$body" --enter --wait-submit 10 --json >/dev/null 2>&1 \
+        || { log "  ⚠ terminal send 실패"; post_slack "⚠️ $tid Coordinator 터미널에 주입 실패" "$thread_ts"; }
+      last_tc="$rts"
+    done <<< "$reply_msgs"
+
+    if [[ "$last_tc" != "$tc" ]]; then
+      echo "$last_tc" > "$tc_file"
+      log "thread cursor $tid → $last_tc"
+    fi
+  done
 }
 
 # ─────────────────────────────────────────────────────────────

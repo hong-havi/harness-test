@@ -235,21 +235,66 @@ handle_worker_done() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# question / escalation — stdout 요약만. Coordinator 가 처리.
+# question / escalation — Slack 에 자동 포스트 (사용자 응답 받기 쉽게)
 # ─────────────────────────────────────────────────────────────
+
+# sender 의 dispatch_id 로 handles 에서 task-id 역매핑
+# (worker 가 ask 호출하면 그 worker 의 dispatch_id 가 senderId 일 수 있음)
+task_id_for_sender() {
+  local sender="$1"
+  [[ -z "$sender" ]] && return 1
+  for h in "$CHAT_DIR"/*.handles; do
+    [[ -f "$h" ]] || continue
+    if grep -q "\"dispatch_id\":\"$sender\"" "$h"; then
+      basename "$h" .handles; return 0
+    fi
+  done
+  # 활성 task 1개 fallback
+  local ids=()
+  shopt -s nullglob
+  for f in "$TASKS_DIR"/T[0-9][0-9][0-9]-*.md; do
+    local st; st="$(awk '/^status:/{sub("^status: *",""); sub(/[[:space:]]+#.*/,""); print; exit}' "$f")"
+    [[ "$st" == "merged" || "$st" == "dropped" ]] && continue
+    local base; base="$(basename "$f" .md)"
+    ids+=("${base%%-*}")
+  done
+  [[ ${#ids[@]} -eq 1 ]] && echo "${ids[0]}" || echo ""
+}
+
+post_slack_question() {
+  local task_id="$1" body="$2" sender="$3" kind="${4:-question}"
+  [[ -z "${SLACK_BOT_TOKEN:-}" || -z "${SLACK_CHANNEL_ID:-}" ]] && return 0
+  local header="🔔 *응답 필요*"
+  [[ "$kind" == "escalation" ]] && header="🚨 *긴급 — escalation*"
+  local tid_hint=""
+  [[ -n "$task_id" ]] && tid_hint=" — *$task_id*"
+  "$MAIN_REPO_ROOT/scripts/slack/send.sh" --text "$header$tid_hint
+
+$body
+
+응답 방법:
+• \`@harness-bot ${task_id:-T###} <답>\` (예: \`@harness-bot ${task_id:-T###} merge\`)
+• 활성 task 1개면 \`@harness-bot <답>\` 으로 축약 가능" >/dev/null 2>&1 || true
+}
+
 handle_question() {
   local msg="$1"
-  local body sender
+  local body sender task_id
   body="$(extract_payload_field "$msg" body)"
   sender="$(extract_payload_field "$msg" senderId)"
-  echo "ACTION: question sender=$sender body='$body'"
+  task_id="$(task_id_for_sender "$sender")" || task_id=""
+  post_slack_question "$task_id" "$body" "$sender" question
+  echo "ACTION: question T=${task_id:-?} sender=$sender body='$body'"
 }
 
 handle_escalation() {
   local msg="$1"
-  local body
+  local body sender task_id
   body="$(extract_payload_field "$msg" body)"
-  echo "ACTION: escalation body='$body'"
+  sender="$(extract_payload_field "$msg" senderId)"
+  task_id="$(task_id_for_sender "$sender")" || task_id=""
+  post_slack_question "$task_id" "$body" "$sender" escalation
+  echo "ACTION: escalation T=${task_id:-?} body='$body'"
 }
 
 # ─────────────────────────────────────────────────────────────
