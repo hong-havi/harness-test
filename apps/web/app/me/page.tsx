@@ -126,6 +126,8 @@ export default function MePage() {
 
         {load.status === 'ready' && (
           <>
+            <p className="subtitle">{load.member.nickname}님 환영합니다</p>
+
             <div className="profile-row">
               <span className="profile-row__label">아이디</span>
               <span>{load.member.userId}</span>
