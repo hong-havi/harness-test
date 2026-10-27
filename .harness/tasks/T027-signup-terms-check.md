@@ -4,7 +4,7 @@ title: 회원가입 페이지 이용약관 동의 체크박스
 slug: signup-terms-check
 branch: task/T027-signup-terms-check
 worktree: .worktrees/T027-signup-terms-check
-status: in-flight          # planning | in-flight | paused | merged | dropped
+status: merged
 required_roles:
   - { role: planner,    agent: kiro }
   - { role: architect,  agent: kiro }
