@@ -255,11 +255,17 @@ run_once() {
   cursor="$(cat "$CURSOR_FILE" 2>/dev/null || echo "0")"
   local msgs
   msgs="$("$LISTENER" --oldest "$cursor" --limit 20 2>/dev/null || true)"
-  [[ -z "$msgs" ]] && return 0
+
+  # Phase 4 Q+: 채널 상위 메시지가 없어도 스레드 polling 은 수행해야 함.
+  # 기존엔 [[ -z "$msgs" ]] && return 0 로 스레드 polling 까지 skip 되는 큰 결함.
+  # 사용자가 스레드 reply 로만 응답하면 relay 가 영원히 못 받았음.
+  if [[ -z "$msgs" ]]; then
+    msgs="__NONE__"  # 아래 while 루프 skip 표식
+  fi
 
   local last_ts="$cursor"
   while IFS=$'\t' read -r ts user text; do
-    [[ -z "$ts" ]] && continue
+    [[ -z "$ts" || "$ts" == "__NONE__" ]] && continue
     # cursor 와 같거나 더 오래된 메시지는 skip (안전망)
     if [[ "$ts" == "$cursor" ]]; then continue; fi
 
