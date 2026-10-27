@@ -4,7 +4,7 @@ title: 회원 로그아웃 버튼
 slug: me-logout
 branch: task/T021-me-logout
 worktree: .worktrees/T021-me-logout
-status: planning          # planning | in-flight | paused | merged | dropped
+status: in-flight          # planning | in-flight | paused | merged | dropped
 required_roles:
   - { role: planner,    agent: kiro }
   - { role: architect,  agent: kiro }
@@ -12,8 +12,9 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: planner
-role_history: []
+current_role: architect
+role_history:
+  - { role: architect, agent: kiro, at: 2026-10-27, note: "Design 섹션 작성, Q1/Q2 확정" }
 ports:
   web: 3210
   api: 4210
@@ -100,30 +101,84 @@ PRD §3.2 F-M3 와 §5.1 에 정의된 로그아웃을 UI + API 양쪽으로 완
 ---
 
 ## Design
-<architect 작성>
+
+> architect (kiro) — 2026-10-27. planner 의 Plan + Open questions(Q1/Q2) 를 확정하고 API 계약·쿠키 만료 규약·CSRF 정책을 고정한다. 코드는 쓰지 않으며, 아래는 backend/frontend/qa 가 따를 계약이다.
+
+### 결정 사항 (Open questions 확정)
+
+- **Q1 — 로그아웃에 CSRF 토큰 요구할지?** → **요구한다 (CSRF 적용).**
+  - 근거: PRD §3.4 는 "상태 변경(POST/PUT/PATCH/DELETE) 요청"에 CSRF 토큰 적용을 명시. 로그아웃은 POST 로 쿠키를 만료시키는 상태 변경 요청이다.
+  - 근거: 기존 `PATCH /members/me` 가 `@UseGuards(JwtAuthGuard, CsrfGuard)` 로 동일 패턴을 이미 확립 — 일관성 유지(신규 예외 규칙 도입은 YAGNI 위반).
+  - 근거: PRD §9 수용 기준 "상태 변경 요청에 CSRF 토큰 누락 시 403 반환" 과 정합.
+  - PRD §5.1 표가 로그아웃을 `JWT` 로만 표기한 점은 상위 원칙(§3.4)과 충돌하는 표기 누락으로 해석. §3.4 의 일반 규칙을 우선 적용한다 (PRD 설계 원칙 위배 아님 — §3.4 범위 내 해석).
+  - **⚠ backend 핸드오프**: 현재 `auth.controller.ts` 의 `logout` 스텁은 `@UseGuards(JwtAuthGuard)` 만 적용되어 있다. **`CsrfGuard` 를 추가**하여 `@UseGuards(JwtAuthGuard, CsrfGuard)` 로 만들 것 (members.controller 의 `updateMe` 와 동일 패턴).
+
+- **Q2 — 로그아웃 후 리다이렉트 목적지?** → **`/login`.**
+  - 근거: planner 기본 제안이며, 로그아웃 직후 재로그인 진입점을 즉시 제공하는 것이 자연스럽다. frontend 재량으로 홈(`/`) 도 허용하나 기본값은 `/login`.
 
 ### 데이터 모델
-<엔티티/스키마 변경 — DDL 수준>
+- **스키마 변경 없음.** 로그아웃은 stateless JWT 쿠키 만료만 수행. DB 엔티티/컬럼/인덱스 변경 없음 → 마이그레이션 불필요.
 
 ### API 계약
-| Method | Path | Auth | 요청 DTO | 응답 | 상태 코드 |
 
-### 흐름
-- 1. ...
-- 2. ...
+| Method | Path | Auth | 요청 DTO | 요청 헤더 | 성공 응답 | 상태 코드 |
+|--------|------|------|----------|-----------|-----------|-----------|
+| POST | `/auth/logout` | JWT + CSRF | (없음, 바디 무시) | `X-CSRF-Token: <csrf_token 쿠키 값>` + `access_token`·`csrf_token` 쿠키 자동 전송 | 바디 `{ "ok": true }` + 아래 2개 `Set-Cookie` (만료) | 200 |
+
+**응답 Set-Cookie 규약 (login 속성과 정확히 대칭 — 불일치 시 브라우저가 쿠키를 지우지 않는 흔한 버그):**
+
+- `Set-Cookie: access_token=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax` (+ `COOKIE_SECURE=true` 환경에서 `Secure`)
+- `Set-Cookie: csrf_token=; Max-Age=0; Path=/; SameSite=Lax` (HttpOnly 아님, login 과 동일; + `COOKIE_SECURE=true` 시 `Secure`)
+- 구현 메모: 기존 `cookieOptions(0)` 헬퍼가 login 과 동일한 `path='/'`, `sameSite='lax'`, `secure=COOKIE_SECURE` 를 보장. `access_token` 은 `httpOnly:true`, `csrf_token` 은 `httpOnly:false` 로 login 설정과 대칭 유지. (현재 스텁이 이미 이 형태 — 유지)
+
+### 흐름 (시퀀스)
+
+Backend (`POST /auth/logout`):
+1. `JwtAuthGuard` → `access_token` 쿠키의 JWT 검증. 없거나 만료/위조 시 **401** (`인증이 필요합니다.`).
+2. `CsrfGuard` → `csrf_token` 쿠키 값 ↔ `X-CSRF-Token` 헤더 값 `timingSafeEqual` 비교. 불일치/누락 시 **403** (`유효하지 않은 요청입니다.`).
+3. 두 가드 통과 시 `access_token`·`csrf_token` 쿠키를 `Max-Age=0` 으로 재설정(만료) → 바디 `{ ok: true }`, **200**.
+
+Frontend (로그아웃 버튼):
+1. 로그인 상태에서만 "로그아웃" 버튼 노출 (로그인 판단은 기존 멤버 상태/`GET /members/me` 패턴 재사용).
+2. 클릭 → `POST /auth/logout` 호출. `credentials: 'include'`, 헤더 `X-CSRF-Token` 에 `csrf_token` 쿠키 값 복사(기존 PATCH /members/me 호출 유틸의 CSRF 헤더 세팅 패턴 재사용).
+3. 2xx 응답 → 클라이언트 로그인 상태 초기화 → `/login` 으로 이동(교체 네비게이션 권장, 뒤로가기로 보호 페이지 복귀 방지).
+4. 비정상 응답(401/403/네트워크 오류) → 사용자에게 간단한 실패 피드백. 단, 쿠키가 이미 서버에서 만료됐을 수 있으므로 UX 재량. (고도화는 범위 밖)
 
 ### 보안 / 에러
-- 입력 검증 지점:
-- 권한 체크:
-- 에러 응답:
+
+- **입력 검증 지점**: 요청 바디 없음 → DTO/ValidationPipe 불필요. 신뢰 입력은 쿠키(JWT, csrf)와 CSRF 헤더뿐이며 기존 가드가 검증.
+- **권한 체크**: `JwtAuthGuard`(인증) + `CsrfGuard`(CSRF) — 로그인 회원 본인 세션만 종료. 타 세션/멀티기기 종료 없음(범위 밖).
+- **민감 정보 흐름**: 토큰/비밀번호 평문을 응답·로그에 노출 금지. 응답 바디는 `{ ok: true }` 로 최소화. `Set-Cookie` 의 쿠키 값은 빈 문자열이므로 토큰 노출 없음.
+- **에러 응답** (PRD §5.3 형식 `{ statusCode, message, error }`):
+  - 쿠키 없음/JWT 만료·위조 → **401**
+  - CSRF 토큰 누락/불일치 → **403**
+- **stateless 특성 명시**: 로그아웃 후에도 이미 발급된 JWT 는 만료 시각까지 기술적으로 유효(PRD §3.2 F-M3, §3.3). 서버측 블랙리스트/Refresh 폐기 **구현 금지**(범위 밖, YAGNI). 브라우저 쿠키 제거로 실질 세션 종료.
 
 ### 마이그레이션 (DB 변경 있을 때)
-- 이름: `<timestamp>-<name>`
-- Up: ...
-- Down: ...
+- **해당 없음** — DB 스키마 변경 없음.
 
-### 테스트 포인트
-- QA가 확인할 지점 ...
+### 테스트 포인트 (QA / backend unit test 참조)
+
+Backend unit test (필수):
+- `POST /auth/logout` 성공 응답이 `access_token` 쿠키를 `Max-Age=0`(만료)로 Set-Cookie 하는지.
+- 동일 응답이 `csrf_token` 쿠키도 `Max-Age=0` 로 만료시키는지.
+- 두 쿠키의 만료 속성(Path=`/`, SameSite=`lax`, Secure=env)이 login 설정과 대칭인지.
+- (가능 시) 유효 JWT + 올바른 CSRF 헤더 조합에서만 200, CSRF 누락 시 403, 무인증 시 401.
+
+QA UAT (수용 기준 대응):
+- 로그인 상태에서 로그아웃 버튼 노출 / 비로그인 시 미노출.
+- 버튼 클릭 → `POST /auth/logout` 200 수신.
+- DevTools Application 탭에서 로그아웃 후 `access_token`·`csrf_token` 쿠키 소멸 확인.
+- 로그아웃 후 `GET /members/me` 호출 시 **401**.
+- 비로그인(쿠키 없음) 상태에서 `POST /auth/logout` 호출 시 **401**.
+- 유효 JWT + CSRF 헤더 누락 상태로 `POST /auth/logout` 호출 시 **403**.
+- 로그아웃 후 `/login` 이동 + 로그인 진입점 노출.
+- 기존 login/members unit test 회귀 없음.
+
+### 핸드오프 요약
+- **backend**: 위 API 계약 구현. 스텁 `logout` 에 `CsrfGuard` 추가(`@UseGuards(JwtAuthGuard, CsrfGuard)`). 쿠키 만료는 기존 `cookieOptions(0)` 재사용(login 대칭). 쿠키 만료 검증 unit test 추가. 서버측 토큰 폐기 구현 금지.
+- **frontend**: 로그인 상태 버튼 노출 + `POST /auth/logout`(`credentials: 'include'` + `X-CSRF-Token` 헤더) + 상태 초기화 + `/login` 리다이렉트. 신규 전역 상태 라이브러리 도입 금지(기존 패턴 재사용).
+- **qa**: 위 QA UAT 지점 전수 확인.
 
 ---
 
