@@ -115,17 +115,85 @@ handle_meta_command() {
     help|도움말|헬프)
       log "META: help"
       post_slack "*harness-bot 명령* _(모두 봇 멘션 필요)_
+*조회*
 • \`status\` — 활성 task + 세션 요약
-• \`help\` — 이 메시지
 • \`list\` — 활성 task 테이블
-• \`T### <메시지>\` — 그 task 의 Coordinator 에 메시지 주입 (예: \`T020 merge\`)
-• (활성 task 1개면 \`T###\` 생략 가능)" "$thread_ts"
+• \`help\` — 이 메시지
+
+*task 라이프사이클*
+• \`new <slug> <요구사항...>\` — 새 task 생성 + Coordinator 자동 띄움
+   예: \`@bot new me-logout 회원 /me 페이지에 로그아웃 버튼\`
+   긴 요구사항은 \`.harness/requests/<slug>.md\` 로 저장 후 \`new <slug>\` 만.
+• \`drop T### --yes\` — task 폐기 (\`--yes\` 명시 필수)
+
+*Coordinator 중계*
+• \`T### <명령>\` — 그 task Coordinator 에 메시지 주입 (예: \`T020 merge\`)
+• 활성 task 1개면 \`T###\` 생략 가능" "$thread_ts"
       return 0 ;;
     list|목록)
       log "META: list"
       local out
       out="$("$MAIN_REPO_ROOT/scripts/tasks.sh" list 2>&1)"
       post_slack "\`\`\`\n$out\n\`\`\`" "$thread_ts"
+      return 0 ;;
+    new)
+      # 형식: new <slug> <요구사항...>
+      local rest slug req
+      rest="$(echo "$body" | sed -E 's/^[[:space:]]*(new|생성)[[:space:]]+//I')"
+      slug="$(echo "$rest" | awk '{print $1}')"
+      req="$(echo "$rest" | awk '{$1=""; sub(/^[[:space:]]+/,""); print}')"
+      log "META: new slug=$slug req='${req:0:80}'"
+      if [[ -z "$slug" || ! "$slug" =~ ^[a-z0-9-]+$ ]]; then
+        post_slack "⚠️ \`new\` 사용법: \`@bot new <kebab-slug> <요구사항...>\`
+slug 은 kebab-case 소문자+숫자+하이픈만 허용. 예:
+    @bot new me-logout-button 회원 /me 페이지에 로그아웃 버튼 추가
+요구사항이 길면 \`.harness/requests/<slug>.md\` 에 저장하고 \`@bot new <slug>\` 만 보내도 자동 매칭됨." "$thread_ts"
+        return 0
+      fi
+      local out
+      if [[ -n "$req" ]]; then
+        out="$("$MAIN_REPO_ROOT/scripts/tasks.sh" new "$slug" "$req" 2>&1)"
+      else
+        out="$("$MAIN_REPO_ROOT/scripts/tasks.sh" new "$slug" 2>&1)"
+      fi
+      # 결과에서 task-id 추출
+      local tid
+      tid="$(echo "$out" | grep -oE 'T[0-9]{3}' | head -1)"
+      # 요약만 보내기 — 전체 로그는 길고 Slack 가독성 낮음
+      local tail_lines
+      tail_lines="$(echo "$out" | tail -15)"
+      if [[ -n "$tid" ]] && echo "$out" | grep -q "Coordinator 세션 띄움"; then
+        post_slack "✅ *$tid* ($slug) 생성 + Coordinator 세션 뜸. 체인 진행 중.
+\`\`\`
+$tail_lines
+\`\`\`" "$thread_ts"
+      else
+        post_slack "⚠️ task 생성 중 문제 가능. 로그 끝:
+\`\`\`
+$tail_lines
+\`\`\`" "$thread_ts"
+      fi
+      return 0 ;;
+    drop|폐기)
+      # 형식: drop T### [--yes]
+      local tid confirm
+      tid="$(echo "$body" | grep -oE '\bT[0-9]{3}\b' | head -1)"
+      confirm="$(echo "$body" | grep -oE '\-\-yes|yes|확인' | head -1)"
+      log "META: drop tid=$tid confirm=$confirm"
+      if [[ -z "$tid" ]]; then
+        post_slack "⚠️ \`drop\` 사용법: \`@bot drop T### --yes\`" "$thread_ts"
+        return 0
+      fi
+      if [[ -z "$confirm" ]]; then
+        post_slack "⚠️ *$tid* drop 은 되돌릴 수 없습니다. 진짜 폐기하려면 \`@bot drop $tid --yes\` 로 다시 보내주세요." "$thread_ts"
+        return 0
+      fi
+      local out
+      out="$("$MAIN_REPO_ROOT/scripts/tasks.sh" drop "$tid" --yes 2>&1)"
+      post_slack "🗑 *$tid* drop 완료.
+\`\`\`
+$(echo "$out" | tail -8)
+\`\`\`" "$thread_ts"
       return 0 ;;
   esac
   return 1

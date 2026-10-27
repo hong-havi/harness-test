@@ -387,6 +387,20 @@ Phase 4 B 재설계로 bash `coord.sh` 가 폐기되면서, Slack listener (`sla
 
 Slack 에서 `@harness-bot T020 merge` 라고 보내면 Coordinator 세션에 "merge" 로 주입됨.
 
+#### Phase 4 D — Slack 메타 명령 확장 (2026-10-27)
+
+relay 가 처리하는 메타 명령 범위 확장:
+- `new <slug> <요구사항...>` — relay 가 직접 `tasks.sh new` 호출. 결과 요약을 Slack 스레드에 응답.
+- `drop T### --yes` — relay 가 `tasks.sh drop <id> --yes` 호출. `--yes` 토큰 없으면 재확인 요청 포스트 (실수 방지).
+- `help` 메시지에 new/drop 사용법 추가.
+
+전체 사용 흐름 (Slack-first):
+
+    @bot new <slug> <요구사항>      → task 생성 + Coordinator 자동 띄움
+    @bot status                     → 중간 상태 조회
+    @bot T### <메시지>              → Coordinator 중계 (reviewer merge 승인 등)
+    @bot drop T### --yes            → 중단
+
 ### Phase 4 B 안정화 (2026-10-27 완료)
 
 - preamble 에 `task-complete` 수신 시 **Coordinator 메인 루프 종료** 명시 (reviewer merge 완료 후 세션이 영원히 돌지 않도록)
