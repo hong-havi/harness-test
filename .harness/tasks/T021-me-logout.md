@@ -12,7 +12,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: frontend
+current_role: qa
 role_history:
   - { role: architect, agent: kiro, at: 2026-10-27, note: "Design 섹션 작성, Q1/Q2 확정" }
 ports:
@@ -282,24 +282,52 @@ pnpm --filter web lint        # next lint → No ESLint warnings or errors
 ---
 
 ## QA report
-<qa 작성>
+
+> qa (kiro) — 2026-10-27. `docker compose up` 로 db+api+web 전체 기동 후 API 레벨 UAT(curl, 컨테이너 네트워크 경유) + 프런트 브라우저 UAT(:3210) + unit test 회귀 전수 수행. 결과: **pass**.
 
 ### 결과
-- 결정: pass | fail
-- 일자: YYYY-MM-DD
-- 환경: WEB=:<port>/API=:<port>/DB=:<port>
+- 결정: **pass**
+- 일자: 2026-10-27
+- 환경: WEB=:3210 / API=:4210 / DB=:3327 (compose_project `harness_t021`)
 
 ### 수용 기준 검증
-- [x] <기준> — pass
-- [ ] <기준> — fail → 아래 참조
+- [x] 로그인 상태에서 "로그아웃" 버튼 노출 / 비로그인 미노출 — pass. `/login`(비로그인) Nav 는 로그인/회원가입/간편가입 노출, `/me`(로그인) Nav 는 "qauser01님 · 내 정보 · 로그아웃" 노출.
+- [x] 버튼 클릭 시 `POST /auth/logout` → 2xx — pass. 브라우저에서 로그아웃 클릭 → `/login` 이동. API UAT 에서 `POST /auth/logout` (유효 JWT+CSRF) → **200** `{"ok":true}`.
+- [x] 응답 `Set-Cookie` 로 `access_token` 만료(`Max-Age=0`) — pass. 실제 응답 헤더: `Set-Cookie: access_token=; Max-Age=0; Path=/; Expires=...; HttpOnly; SameSite=Lax`. 브라우저 로그아웃 후 `document.cookie` 비어 있음.
+- [x] `csrf_token` 쿠키도 함께 만료 — pass. 실제 응답 헤더: `Set-Cookie: csrf_token=; Max-Age=0; Path=/; Expires=...; SameSite=Lax`. (login 속성과 정확히 대칭)
+- [x] 로그아웃 후 `GET /members/me` → 401 — pass. API UAT 에서 로그아웃 직후 동일 쿠키 jar 로 `GET /members/me` → **401**.
+- [x] 로그아웃 후 `/login` 이동 + 로그인 진입점 노출 — pass. 브라우저에서 로그아웃 클릭 → `/login` 리다이렉트, Nav 가 anon(로그인 진입점)으로 전환.
+- [x] 비로그인(쿠키 없음) `POST /auth/logout` → 401 — pass. API UAT 에서 쿠키 없이 호출 → **401** (`JwtAuthGuard`).
+- [x] CSRF 토큰 누락 상태 로그아웃 → 403 — pass. 유효 JWT + `X-CSRF-Token` 헤더 누락 호출 → **403** (`CsrfGuard`). architect Q1 결정(CSRF 요구)과 정합.
+- [x] 기존 login/members 플로우 회귀 없음 — pass. api unit test 4 suites / **37 tests 전부 통과** (`auth.controller.spec.ts` 로그아웃 쿠키 만료 포함, `csrf.guard.spec.ts` 포함).
+
+### 비기능 / 보안 교차 확인 (PRD §5.3, §3.4)
+- [x] HttpOnly: 로그인 후 `document.cookie` 에 `access_token` **미노출**(csrf_token 만 보임) — DevTools evaluate 로 확인(`hasAccessToken=false`).
+- [x] 상태 코드 규약: login 200 / me(authed) 200 / logout 200 / me(logout 후) 401 / logout(무인증) 401 / logout(CSRF 누락) 403 — PRD §5.3 규약과 일치.
+- [x] 에러 응답에 스택트레이스/민감정보 없음 — 401 바디 `{"message":"인증이 필요합니다.","error":"Unauthorized","statusCode":401}` 형태만.
+- [x] 환경: `docker compose up` 으로 db(healthy)+api+web 전체 기동 성공. (단, 마이그레이션 관련 pre-existing 갭 — 아래 발견 사항 N1 참조)
+- [x] 재기동 후 DB 데이터 보존: db 재시작 후 `members` 행 1건 유지(볼륨 `task_T021_mysql` 작동).
 
 ### 발견 사항
-- 없음 또는
-- **[FAIL]** <요약>
-  - 재현:
-    1. ...
-  - 기대: ...
-  - 실제: ...
+- **[PASS]** T021 로그아웃 기능 자체는 수용 기준 전 항목 통과. **fail 없음.**
+
+- **[NOTE N1 — pre-existing, T021 범위 밖]** 프로덕션 runtime 이미지(`--prod`)에 `ts-node`(devDependency)가 없어, 문서화된 `docker compose run --rm api pnpm migration:run` 이 `Cannot find module 'ts-node'` 로 실패함. `migration:run` 스크립트가 `typeorm-ts-node-commonjs -d src/data-source.ts` 를 사용하기 때문. `app.module.ts`/`data-source.ts` 는 `synchronize:false` 이므로 마이그레이션 없이는 `members` 테이블이 생성되지 않아 전체 플로우가 막힘.
+  - **T021 과 무관**: 로그아웃은 DB 스키마 변경이 없고(Design "마이그레이션 불필요"), 이 갭은 모든 task 공통 인프라 이슈.
+  - **QA 우회(검증 목적)**: 컴파일된 `dist/migrations/*.js` 를 가리키는 임시 JS data-source 로 `typeorm CLI` 를 직접 실행하여 스키마 시드 후 UAT 진행. (임시 파일은 커밋하지 않고 제거함.)
+  - **권고(reviewer/coordinator 판단)**: 별도 task 로 (a) runtime 이미지에 ts-node 포함 또는 (b) 컴파일된 JS data-source 기반 `migration:run:prod` 스크립트 추가 또는 (c) 기동 시 `migrationsRun` 중 하나로 docker-only 기동 보장 권장.
+
+- **[NOTE N2 — minor UX, pre-existing, T021 범위 밖]** 로그인 폼 제출 후 클라이언트 네비게이션(`router.push`)으로 `/me` 진입 시, 상단 `Nav` 가 로그인 **직전** mount 시점의 `getMe()`(401, anon) 결과를 유지하여 로그아웃 버튼이 즉시 보이지 않는 순간이 있음. **전체 새로고침(또는 직접 `/me` 진입) 시 정상적으로 authed Nav + 로그아웃 버튼 노출**됨 → 수용 기준("로그인 상태에서 로그아웃 버튼 노출")은 충족. Nav 는 기존 T002/T003 자산이며 T021 이 수정하지 않음. 필요 시 별도 UX task 로 Nav 상태 갱신(로그인 성공 이벤트 반영) 고려.
+
+### 재현 (참고 — API UAT 요약)
+```
+POST /auth/signup  qauser01            → 201
+POST /auth/login   qauser01            → 200, Set-Cookie access_token(HttpOnly)+csrf_token
+GET  /members/me   (authed, cookies)   → 200
+POST /auth/logout  (JWT + X-CSRF-Token)→ 200 {"ok":true}, Set-Cookie 2건 Max-Age=0
+GET  /members/me   (logout 후 jar)     → 401
+POST /auth/logout  (쿠키 없음)          → 401
+POST /auth/logout  (JWT 있음, CSRF 헤더 없음) → 403
+```
 
 ---
 
