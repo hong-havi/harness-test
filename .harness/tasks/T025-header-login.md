@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,  agent: kiro }
   - { role: qa,        agent: kiro }
   - { role: reviewer,  agent: kiro }
-current_role: frontend
+current_role: qa
 role_history: []
 ports:
   web: 3250
@@ -151,3 +151,49 @@ docker compose up              # web+api+db 기동 (현재 worktree 포트)
 - [x] `dangerouslySetInnerHTML` 미사용
 - [x] 범위 밖 파일 변경 없음 (apps/web + task.md 만)
 - [x] chat 에 `deliver` append (완료 시)
+
+
+
+## QA report
+
+### 결정: **PASS** → reviewer
+
+순수 리네임 리팩터(Nav → Header). 정적 검증 + 전체 스택(Docker) 런타임 검증을 모두 수행했고
+모든 수용 기준을 통과했다. 버그 수정은 없음(QA 는 보고만).
+
+### 환경
+- `pnpm install` (lockfile up to date) → `pnpm --filter web run build` 성공.
+- `docker compose up -d` (web:3250 / api:4250 / db:3331, COMPOSE_PROJECT_NAME=harness_t025) 전체 기동.
+- DB 스키마: 런타임 이미지가 prod(ts-node 부재)라 `migration:run`(ts) 실패 → 컴파일된
+  `dist/migrations/*.js` 를 datasource 로 직접 실행하여 마이그레이션 적용
+  (`CreateMembers1729468800000`, `AddMemberEmail1729814400000`). **앱 코드/스키마 변경 아님**, QA 환경 기동용.
+- 브라우저(Playwright)로 실제 UI 확인.
+
+### 수용 기준 검증 결과 (전수)
+- [PASS] `components/Header.tsx` 존재 + `export default function Header()`. `Nav.tsx` 삭제(git mv R).
+- [PASS] `layout.tsx` 가 `./components/Header` import + `<Header />` 렌더. `Nav` 참조 0.
+- [PASS] `apps/web` 전체 `components/Nav`/`<Nav`/`function Nav(`/`import Nav` 0건
+  (grep). 유일 매치는 `<nav className="header">` 시맨틱 태그(스펙상 제외) + `next/navigation`(무관).
+- [PASS] `globals.css` 에 `.nav*` 0건, `.header`/`.header__brand`/`.header__links` 로 대체.
+  런타임 computed style 확인: `nav.header { display:flex }`, `.header__brand`/`.header__links` 존재 → 스타일 정상 적용.
+- [PASS] `pnpm --filter web run build` 성공 — "✓ Compiled successfully", 타입/린트 통과, 9/9 static pages, 에러 0.
+  (Docker 내 web 빌드도 동일하게 "Compiled successfully".)
+- [PASS] **로그인 상태 Header** — `http://localhost:3250/` 에서 `QA테스터님` + "내 정보" + "로그아웃" 버튼 표시.
+  로그아웃 클릭 → `POST /api/auth/logout` **200 OK** → `/login` 이동 확인. 로그아웃 후 Header 가 anon 으로 복귀.
+- [PASS] **비로그인 상태 Header** — "로그인" / "회원가입" / "간편 가입" 링크 표시(기존 동작 유지).
+
+### 비기능 교차 검증 (PRD §9 / 권한)
+- [PASS] HttpOnly 쿠키: 로그인 후 `document.cookie` = `csrf_token=...` 만 노출, `access_token` **미노출**(hasAccessToken=false). 로그아웃 후 쿠키 전부 제거.
+- [PASS] 비로그인에서 보호 API `GET /api/members/me` → **401**(Header 가 anon 분기로 전환). 콘솔 에러는 의도된 401.
+- [NOTE] 콘솔의 `favicon.ico 404` 는 리네임과 무관한 기존/범위 밖 cosmetic 이슈(수용 기준 아님).
+
+### 회귀 샘플링
+- [PASS] 핵심 플로우 가입 → 로그인 → (내 정보 리다이렉트) → 로그아웃 전 구간 정상.
+- [PASS] Header 렌더/분기 로직 동작 보존(anon ↔ authed 전환 정상).
+
+### 발견된 FAIL
+- 없음.
+
+### reviewer 참고
+- 순수 리네임이므로 동작 보존(로그아웃 플로우·분기)과 잔여 `Nav` 참조 0 을 집중 확인 → 모두 PASS.
+- 커밋 변경 파일은 `apps/web` + task.md 뿐. 범위 밖 변경 없음.
