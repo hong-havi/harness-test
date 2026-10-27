@@ -9,10 +9,12 @@
 #   5. 봇 멘션 토큰 (<@Uxxx>) 과 선행 "T###" 는 제거해서 자연스러운 명령만 주입.
 #
 # 사용:
-#   relay.sh start      # setsid+nohup 백그라운드
+#   relay.sh start      # setsid+nohup 백그라운드 (임시/테스트)
 #   relay.sh stop       # PID 파일 기반 종료
 #   relay.sh status     # 돌고 있는지 확인
 #   relay.sh once       # 1 사이클만 (디버깅)
+#   relay.sh install    # OS 감지 → Task Scheduler / launchd / systemd 로 자동 시작 등록 (운영)
+#   relay.sh uninstall  # 자동 시작 등록 제거
 #
 # 상태 파일:
 #   .harness/coord/relay.pid        — 데몬 PID
@@ -333,12 +335,164 @@ cmd_status() {
   echo "not running"
 }
 
+# ─────────────────────────────────────────────────────────────
+# install / uninstall — OS 감지 후 자동 시작 서비스 등록
+#   Windows → Task Scheduler (/sc onlogon)
+#   macOS   → launchd user agent (~/Library/LaunchAgents/)
+#   Linux   → systemd user service (~/.config/systemd/user/)
+#
+# 모두 재부팅 / 로그온 후 자동 복구. 다른 PC 로 clone + .env 복사 +
+# `./scripts/slack/relay.sh install` 한 번으로 운영 상태 도달.
+# ─────────────────────────────────────────────────────────────
+detect_os() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) echo windows ;;
+    Darwin)               echo macos ;;
+    Linux)                echo linux ;;
+    *) return 1 ;;
+  esac
+}
+
+install_windows() {
+  # git-bash 경로 자동 감지
+  local bash_exe=""
+  for p in \
+      "/c/Program Files/Git/bin/bash.exe" \
+      "/c/Program Files (x86)/Git/bin/bash.exe" \
+      "/c/Program Files/Git/usr/bin/bash.exe"; do
+    [[ -f "$p" ]] && { bash_exe="$p"; break; }
+  done
+  [[ -n "$bash_exe" ]] || { echo "ERROR: git-bash 를 찾지 못함" >&2; return 1; }
+
+  local win_bash win_repo
+  win_bash="$(cygpath -w "$bash_exe")"
+  win_repo="$(cygpath -w "$MAIN_REPO_ROOT")"
+
+  # Task Scheduler 등록 — 로그온 시, 일반 권한, 기존 덮어쓰기.
+  # /tr 안의 bash 명령은 데몬 모드 __daemon 로 직접 (nohup 없이 schtasks 가 수명 담당).
+  local tr
+  tr="\"$win_bash\" -lc \"cd '$MAIN_REPO_ROOT' && ./scripts/slack/relay.sh __daemon >> .harness/coord/relay.log 2>&1\""
+
+  # schtasks 는 git-bash 에서 호출 시 `/` 가 Windows 경로로 변환되므로 `//` 사용.
+  schtasks //create //tn "harness-relay" //tr "$tr" //sc onlogon //rl limited //f >/dev/null \
+    || { echo "ERROR: schtasks 등록 실패" >&2; return 1; }
+  info "✓ Task Scheduler 등록: harness-relay (로그온 시 자동 실행)"
+  info "  확인: schtasks //query //tn harness-relay"
+  info "  수동 실행: schtasks //run //tn harness-relay"
+}
+
+uninstall_windows() {
+  schtasks //delete //tn "harness-relay" //f >/dev/null 2>&1 \
+    && info "✓ Task Scheduler 제거: harness-relay" \
+    || info "(harness-relay 등록 없음)"
+}
+
+install_macos() {
+  local plist="$HOME/Library/LaunchAgents/com.harness.relay.plist"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.harness.relay</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>cd "$MAIN_REPO_ROOT" &amp;&amp; ./scripts/slack/relay.sh __daemon</string>
+  </array>
+  <key>WorkingDirectory</key><string>$MAIN_REPO_ROOT</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$MAIN_REPO_ROOT/.harness/coord/relay.log</string>
+  <key>StandardErrorPath</key><string>$MAIN_REPO_ROOT/.harness/coord/relay.log</string>
+</dict>
+</plist>
+EOF
+  launchctl unload "$plist" 2>/dev/null
+  launchctl load "$plist" || { echo "ERROR: launchctl load 실패" >&2; return 1; }
+  info "✓ launchd 등록: $plist"
+  info "  확인: launchctl list | grep com.harness.relay"
+}
+
+uninstall_macos() {
+  local plist="$HOME/Library/LaunchAgents/com.harness.relay.plist"
+  if [[ -f "$plist" ]]; then
+    launchctl unload "$plist" 2>/dev/null
+    rm -f "$plist"
+    info "✓ launchd 제거: $plist"
+  else
+    info "(com.harness.relay 등록 없음)"
+  fi
+}
+
+install_linux() {
+  local svc="$HOME/.config/systemd/user/harness-relay.service"
+  mkdir -p "$(dirname "$svc")"
+  cat > "$svc" <<EOF
+[Unit]
+Description=Harness Slack Relay (polls Slack and injects into Coordinator session)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=$MAIN_REPO_ROOT
+ExecStart=/bin/bash -lc 'exec ./scripts/slack/relay.sh __daemon'
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:$MAIN_REPO_ROOT/.harness/coord/relay.log
+StandardError=append:$MAIN_REPO_ROOT/.harness/coord/relay.log
+
+[Install]
+WantedBy=default.target
+EOF
+  systemctl --user daemon-reload
+  systemctl --user enable --now harness-relay >/dev/null \
+    || { echo "ERROR: systemctl enable 실패" >&2; return 1; }
+  info "✓ systemd user service 등록: $svc"
+  info "  확인: systemctl --user status harness-relay"
+}
+
+uninstall_linux() {
+  if systemctl --user list-unit-files harness-relay.service &>/dev/null; then
+    systemctl --user disable --now harness-relay >/dev/null 2>&1 || true
+    rm -f "$HOME/.config/systemd/user/harness-relay.service"
+    systemctl --user daemon-reload
+    info "✓ systemd user service 제거"
+  else
+    info "(harness-relay.service 등록 없음)"
+  fi
+}
+
+cmd_install() {
+  [[ -n "${SLACK_BOT_TOKEN:-}" && -n "${SLACK_CHANNEL_ID:-}" ]] \
+    || die "SLACK_BOT_TOKEN/SLACK_CHANNEL_ID 미설정 (.env). 등록 전 환경 설정부터."
+  local os
+  os="$(detect_os)" || die "지원하지 않는 OS: $(uname -s)"
+  info "OS 감지: $os"
+  # 기존 nohup 데몬 돌고 있으면 stop (Task 등록 후 중복 방지)
+  if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    info "기존 nohup 데몬 발견 → stop"
+    cmd_stop
+  fi
+  "install_$os"
+}
+
+cmd_uninstall() {
+  local os
+  os="$(detect_os)" || die "지원하지 않는 OS: $(uname -s)"
+  "uninstall_$os"
+}
+
 cmd="${1:-}"
 case "$cmd" in
   start)    cmd_start ;;
   stop)     cmd_stop ;;
   status)   cmd_status ;;
   once)     run_once ;;
+  install)  cmd_install ;;
+  uninstall) cmd_uninstall ;;
   __daemon) run_daemon ;;
   ""|-h|--help)
     sed -n '2,/^$/p' "$0" | sed 's/^# *//' ;;

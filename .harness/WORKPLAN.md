@@ -402,6 +402,19 @@ Phase 4 B 재설계로 bash `coord.sh` 가 폐기되면서, Slack listener (`sla
 
 Slack 에서 `@harness-bot T020 merge` 라고 보내면 Coordinator 세션에 "merge" 로 주입됨.
 
+#### Phase 4 E — 크로스 플랫폼 자동 시작 (2026-10-27)
+
+`relay.sh install` / `uninstall` 서브커맨드 — OS 감지해 OS 네이티브 서비스 매니저에 등록:
+- **Windows** → Task Scheduler `/sc onlogon`, git-bash 경로 자동 감지 (`cygpath` 사용)
+- **macOS** → `~/Library/LaunchAgents/com.harness.relay.plist` + `launchctl load`
+- **Linux** → `~/.config/systemd/user/harness-relay.service` + `systemctl --user enable --now`
+
+이로써 다른 PC 배포가 **3-step**:
+
+    git clone <repo> && cp .env.example .env && ./scripts/slack/relay.sh install
+
+재부팅/로그온 후 자동 복구. nohup 수동 재시작 불필요.
+
 #### Phase 4 D — Slack 메타 명령 확장 (2026-10-27)
 
 relay 가 처리하는 메타 명령 범위 확장:

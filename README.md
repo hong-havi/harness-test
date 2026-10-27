@@ -95,6 +95,27 @@ Per-task worktree    task마다 .worktrees/T###-<slug>/ (브랜치: task/T###-<s
 - 모든 상태는 **파일에 영속**: `.harness/tasks/T###.md`, `.harness/chat/T###.jsonl`, git 커밋
 - 역할-에이전트 매핑(claude/codex/kiro 등)은 task.md에 선언. Phase 2에서 자동 spawn (Orca).
 
+## 다른 PC 로 배포 (1-step 셋업)
+
+```bash
+git clone <repo-url>
+cd harness-test
+cp .env.example .env            # SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, HARNESS_DEFAULT_AGENT 채움
+./scripts/orca/setup.sh         # Orca external-worktree visibility (최초 1회)
+./scripts/slack/relay.sh install   # OS 자동 감지 → 서비스 등록 (로그온/부팅 시 자동 시작)
+```
+
+`relay.sh install` 이 OS 별로:
+- **Windows** → Task Scheduler (`schtasks /sc onlogon`), git-bash 경로 자동 감지
+- **macOS** → `~/Library/LaunchAgents/com.harness.relay.plist` + `launchctl load`
+- **Linux** → `~/.config/systemd/user/harness-relay.service` + `systemctl --user enable --now`
+
+**제거**: `./scripts/slack/relay.sh uninstall`
+
+**임시 실행 (등록 없이)**: `./scripts/slack/relay.sh start` (nohup 백그라운드)
+
+---
+
 ## 명령어 레퍼런스
 
 ### 최초 1회 (Orca 환경 세팅)
