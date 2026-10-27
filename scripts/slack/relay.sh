@@ -405,35 +405,24 @@ detect_os() {
 }
 
 install_windows() {
-  # git-bash 경로 자동 감지
-  local bash_exe=""
-  for p in \
-      "/c/Program Files/Git/bin/bash.exe" \
-      "/c/Program Files (x86)/Git/bin/bash.exe" \
-      "/c/Program Files/Git/usr/bin/bash.exe"; do
-    [[ -f "$p" ]] && { bash_exe="$p"; break; }
-  done
-  [[ -n "$bash_exe" ]] || { echo "ERROR: git-bash 를 찾지 못함" >&2; return 1; }
+  # .bat wrapper 경로 (Task Scheduler 에 등록)
+  local bat_abs="$MAIN_REPO_ROOT/scripts/slack/relay-start.bat"
+  [[ -f "$bat_abs" ]] || { echo "ERROR: $bat_abs 없음" >&2; return 1; }
 
-  local win_bash win_repo
-  win_bash="$(cygpath -w "$bash_exe")"
-  win_repo="$(cygpath -w "$MAIN_REPO_ROOT")"
-
-  # Task Scheduler 등록 — 로그온 시, 일반 권한, 기존 덮어쓰기.
-  # /tr 안의 bash 명령은 데몬 모드 __daemon 로 직접 (nohup 없이 schtasks 가 수명 담당).
-  local tr
-  tr="\"$win_bash\" -lc \"cd '$MAIN_REPO_ROOT' && ./scripts/slack/relay.sh __daemon >> .harness/coord/relay.log 2>&1\""
+  local bat_win
+  bat_win="$(cygpath -w "$bat_abs")"
 
   # schtasks 는 git-bash 에서 호출 시 `/` 가 Windows 경로로 변환되므로 `//` 사용.
-  if ! schtasks //create //tn "harness-relay" //tr "$tr" //sc onlogon //rl limited //f >/dev/null 2>&1; then
+  if ! schtasks //create //tn "harness-relay" //tr "$bat_win" //sc onlogon //rl limited //f >/dev/null 2>&1; then
     cat >&2 <<HELP
 ERROR: schtasks 자동 등록 실패 (Windows UAC 또는 계정 정책 가능성).
 
-수동 등록 — PowerShell(관리자) 열고 아래 실행:
+수동 등록 — PowerShell 또는 cmd 열고 아래 실행 (공백 없고 간단):
 
-  schtasks /create /tn "harness-relay" /tr '"$win_bash" -lc "cd \"$MAIN_REPO_ROOT\" && ./scripts/slack/relay.sh __daemon >> .harness/coord/relay.log 2>&1"' /sc onlogon /rl limited /f
+  schtasks /create /tn "harness-relay" /tr "$bat_win" /sc onlogon /rl limited /f
 
-또는 nohup 모드 유지 (매번 수동 start):
+관리자 권한이 필요하면 PowerShell(관리자) 로.
+또는 nohup 모드 유지:
   ./scripts/slack/relay.sh start
 
 확인: schtasks /query /tn harness-relay
@@ -441,7 +430,8 @@ HELP
     return 1
   fi
   info "✓ Task Scheduler 등록: harness-relay (로그온 시 자동 실행)"
-  info "  확인: schtasks //query //tn harness-relay"
+  info "  wrapper: $bat_win"
+  info "  확인:    schtasks //query //tn harness-relay"
   info "  수동 실행: schtasks //run //tn harness-relay"
 }
 
