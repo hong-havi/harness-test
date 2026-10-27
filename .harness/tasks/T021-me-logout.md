@@ -12,7 +12,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: architect
+current_role: backend
 role_history:
   - { role: architect, agent: kiro, at: 2026-10-27, note: "Design 섹션 작성, Q1/Q2 확정" }
 ports:
@@ -183,24 +183,49 @@ QA UAT (수용 기준 대응):
 ---
 
 ## Implementation (Backend)
-<backend 작성>
+
+> backend (kiro) — 2026-10-27. architect 의 API 계약대로 `POST /auth/logout` 에 CSRF 가드를 추가하고 쿠키 만료 동작을 unit test 로 고정. 기존 스텁이 이미 `cookieOptions(0)` 로 두 쿠키를 `Max-Age=0` 만료시키고 있어 로직 변경은 가드 1건 + 테스트 신규가 핵심.
+
+### 설계 메모
+- 엔드포인트: `POST /auth/logout` — `@UseGuards(JwtAuthGuard, CsrfGuard)`, `@HttpCode(200)`.
+- 엔티티/스키마 변경: **없음** (stateless JWT 쿠키 만료만). → 마이그레이션 불필요.
+- 쿠키 만료: `access_token`(HttpOnly) · `csrf_token`(non-HttpOnly) 모두 빈 값 + `cookieOptions(0)`(Path=`/`, SameSite=`lax`, Secure=env). login 설정과 정확히 대칭.
 
 ### 변경 파일
-- `apps/api/.../...` — 설명
+- `apps/api/src/auth/auth.controller.ts` — `logout` 핸들러 가드에 `CsrfGuard` 추가(`@UseGuards(JwtAuthGuard, CsrfGuard)`), `CsrfGuard` import 추가. (쿠키 만료 로직은 기존 스텁 유지)
+- `apps/api/src/auth/auth.controller.spec.ts` — **신규**. logout 쿠키 만료 동작 unit test (6건).
 
 ### 새 환경변수
-- `VAR_NAME` — 용도
+- 없음 (기존 `COOKIE_SECURE` 재사용).
 
 ### 마이그레이션
-- 파일명: ...
+- 해당 없음 (DB 스키마 변경 없음).
 
 ### 로컬 재현
 ```bash
-# 명령
+pnpm install
+pnpm --filter api typecheck     # tsc --noEmit → 통과
+pnpm --filter api test          # jest → 4 suites / 37 tests 통과
 ```
+> 주: `pnpm --filter api lint` 는 이 저장소에서 eslint 가 api 패키지 의존성/설정에 없어 실행 불가 (기존 환경 갭, 이번 변경과 무관). 정적 검증은 `tsc` 로 대체.
 
-### 수용 기준 자가 검증
-- [x] ...
+### API 계약 (frontend 핸드오프 — 실제 응답 형태)
+- 요청: `POST /auth/logout`, 헤더 `X-CSRF-Token: <csrf_token 쿠키 값>`, `credentials: 'include'` (쿠키 자동 전송). 바디 없음.
+- 성공: `200` + 바디 `{ "ok": true }` + 2개 `Set-Cookie`:
+  - `access_token=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax` (+ `COOKIE_SECURE=true` 시 `Secure`)
+  - `csrf_token=; Max-Age=0; Path=/; SameSite=Lax` (HttpOnly 아님; + `COOKIE_SECURE=true` 시 `Secure`)
+- 에러: 쿠키 없음/JWT 무효 → `401` (`인증이 필요합니다.`), CSRF 누락/불일치 → `403` (`유효하지 않은 요청입니다.`).
+
+### 수용 기준 자가 검증 (backend 범위)
+- [x] `POST /auth/logout` 은 `access_token` 쿠키를 `Max-Age=0`(HttpOnly, Path=/, SameSite=lax)로 만료 — unit test 통과.
+- [x] `POST /auth/logout` 은 `csrf_token` 쿠키도 `Max-Age=0`(non-HttpOnly, Path=/, SameSite=lax)로 만료 — unit test 통과.
+- [x] `COOKIE_SECURE=true` 시 두 쿠키 모두 `Secure` (login 대칭) — unit test 통과.
+- [x] 성공 바디 `{ ok: true }`, `200` — unit test 통과.
+- [x] 무인증(JWT 쿠키 없음) 호출 → `401`: `JwtAuthGuard` 가 보장 (guard 적용으로 커버, UAT 는 qa).
+- [x] CSRF 토큰 누락/불일치 → `403`: `CsrfGuard` 추가로 보장 (기존 `csrf.guard.spec.ts` 가 가드 동작 검증, UAT 는 qa).
+- [x] 서버측 토큰 블랙리스트/Refresh 폐기 미구현 (YAGNI, 범위 밖) — 준수.
+- [x] 기존 login/members 테스트 회귀 없음 — 전체 37 tests 통과.
+- 비고(qa 범위): 브라우저 DevTools 쿠키 소멸, 로그아웃 후 `GET /members/me` 401, `/login` 리다이렉트는 frontend 구현 후 qa UAT 로 확인.
 
 ---
 

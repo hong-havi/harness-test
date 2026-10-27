@@ -13,6 +13,7 @@ import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { JoinDto } from './dto/join.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { CsrfGuard } from './csrf.guard';
 
 const COOKIE_PATH = '/';
 
@@ -68,7 +69,7 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CsrfGuard)
   async logout(@Res({ passthrough: true }) res: Response) {
     res.cookie('access_token', '', { ...cookieOptions(0), httpOnly: true });
     res.cookie('csrf_token', '', { ...cookieOptions(0), httpOnly: false });
