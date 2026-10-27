@@ -42,6 +42,13 @@ extract_type() {
   echo "$1" | grep -oE '"type"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/'
 }
 
+# deliveryId 추출 — Coordinator 가 다음 check 호출에 --ack <id> 로 포함해야
+# Orca 가 재배포를 멈춤. 추출 안 되면 빈 문자열.
+extract_delivery_id() {
+  echo "$1" | grep -oE '"deliveryId"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 \
+    | sed -E 's/.*"([^"]+)"$/\1/'
+}
+
 # payload JSON 문자열 안에서 key 추출 (escaped quotes)
 extract_payload_field() {
   local msg="$1" key="$2"
@@ -253,6 +260,7 @@ case "$cmd" in
   handle)
     msg="${2:?msg JSON required}"
     type="$(extract_type "$msg")"
+    delivery_id="$(extract_delivery_id "$msg")"
     case "$type" in
       worker_done) handle_worker_done "$msg" ;;
       question)    handle_question "$msg" ;;
@@ -260,6 +268,9 @@ case "$cmd" in
       heartbeat)   echo "ACTION: heartbeat" ;;
       *)           echo "ACTION: unknown type=$type" ;;
     esac
+    # Coordinator 가 다음 check 에 --ack 로 포함해야 재배포 멈춤.
+    # type 에 관계없이 (heartbeat 포함) delivery_id 가 있으면 ack 지시 출력.
+    [[ -n "$delivery_id" ]] && echo "ACTION: ack delivery=$delivery_id"
     ;;
   *) echo "Usage: $0 handle <msg-json>" >&2; exit 1 ;;
 esac

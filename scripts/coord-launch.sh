@@ -97,8 +97,23 @@ coord-step.sh 가 stdout 에 \`ACTION: ...\` 라인으로 다음에 할 일을 �
 - \`ACTION: ask-user T=... msg='...'\` → \`orca orchestration ask --body "..."\` 로 사용자 결정 요청.
 - \`ACTION: question sender=... body='...'\` → ask 로 사용자 중계 후 \`orca orchestration reply --to <sender> --body "..."\` 로 응답.
 - \`ACTION: escalation ...\` → ask 로 사용자 긴급 알림.
-- \`ACTION: task-complete T=...\` → 사용자에게 간단한 완료 리포트(한 줄 요약) 를 응답으로 출력하고 **메인 루프를 종료**. 더 이상 check-wait 호출 금지. Coordinator 세션은 사용자가 \`orca terminal close\` 하거나 \`./scripts/harness-status.sh\` 가 정리합니다.
+- \`ACTION: task-complete T=...\` → 사용자에게 간단한 완료 리포트(한 줄 요약) 를 응답으로 출력하고 **메인 루프를 종료**. 더 이상 check-wait 호출 금지.
 - \`ACTION: heartbeat\` 또는 응답 없음 → 그냥 다시 check.
+- \`ACTION: ack delivery=<delivery_id>\` → **매우 중요**. 다음 check 호출에 반드시 \`--ack <delivery_id>\` 를 포함하세요. 안 하면 Orca 가 60초마다 같은 메시지를 재배포하고 큐가 막혀 다음 worker_done 을 받지 못합니다.
+
+## ⚠️ ACK 패턴 (반드시 지킬 것)
+
+coord-step.sh 는 각 메시지 처리 후 보통 **마지막 라인에 \`ACTION: ack delivery=<id>\`** 를 출력합니다. **다음 check 호출에 그 id 를 반드시 포함** 하세요:
+
+    # 이번 턴 끝에 받은 delivery_id 를 변수에 저장
+    LAST_ACK=\$(./scripts/coord-step.sh handle "\$msg_json" | tee /dev/stderr | awk -F'=' '/^ACTION: ack delivery=/{print \$2}')
+
+    # 다음 check 호출에 --ack 포함
+    msg_json=\$(orca orchestration check --wait --ack "\$LAST_ACK" \\
+      --types worker_done,question,escalation,heartbeat \\
+      --timeout-ms 60000 --json)
+
+ack 하지 않으면 **planner succeeded 가 영원히 재배포되어 architect worker_done 이 큐에 밀려 처리 불가** 등의 교착 발생.
 
 **이 루프를 모든 required_roles 완료까지 반복합니다. \`task-complete\` 받으면 루프 즉시 종료.**
 
