@@ -103,9 +103,21 @@ chain: planner → [architect] → [designer] → [backend] → [frontend] → q
 ```bash
 git clone <repo-url>
 cd harness-test
-cp .env.example .env            # SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, HARNESS_DEFAULT_AGENT 채움
-./scripts/orca/setup.sh         # Orca external-worktree visibility (최초 1회)
+./scripts/setup.sh              # 의존성 체크 + .env 복사 + Orca 세팅 + pnpm install (대화형)
+# 또는 전부 자동으로:
+./scripts/setup.sh --yes
+
+# 체크만 (설치 안 함):
+./scripts/setup.sh --check-only
 ```
+
+`setup.sh` 가 수행:
+1. 필수 의존성 체크 (`git`, `bash`, `python`, `curl`, `orca` CLI, Windows 는 `cygpath`)
+2. 선택 의존성 체크 (`pnpm`, `docker`)
+3. `.env` 없으면 `.env.example` 복사 + 토큰 입력 안내 (`SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`, `HARNESS_DEFAULT_AGENT`)
+4. Orca external-worktree visibility 설정 (1회성)
+5. `pnpm install` (apps 의존성)
+6. (선택) Slack relay 자동 시작 등록
 
 **Slack relay 데몬은 수동 등록 불필요** — `./scripts/tasks.sh new` 가 **자동 start** (이미 돌고 있으면 skip). Orca 꺼져있으면 Slack 응답 받아도 전달 불가하므로 상시 상주할 가치 없음. task 시작 시 보장되는 모델.
 
