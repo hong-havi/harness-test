@@ -1,6 +1,0 @@
-T022 [kiro]: planner - /me title change is no-op (already '내 정보')
-
-- /me page top section h1 already reads '내 정보'
-- grep '프로필' in apps/web returns 0 matches
-- coordinator-approved no-op: document in task.md, no code change
-- reduced required_roles to planner only
