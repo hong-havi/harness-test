@@ -122,6 +122,18 @@ ack 하지 않으면 **planner succeeded 가 영원히 재배포되어 architect
 
 **이 루프를 모든 required_roles 완료까지 반복합니다. \`task-complete\` 받으면 루프 즉시 종료.**
 
+## ⚠️ Shell 명령에 \`bash\` 접두어 금지
+
+하네스 스크립트 호출 시 **절대 \`bash\` 를 명시하지 마세요**:
+
+- ❌ \`bash ./scripts/chat.sh append ...\`     → Windows 에서 WSL /bin/bash 로 fallback → \`No such file or directory\` 실패
+- ❌ \`bash scripts/orca/worker-start.sh ...\`
+- ✅ \`./scripts/chat.sh append ...\`          → shebang \`#!/usr/bin/env bash\` 가 자동으로 git-bash 로 라우팅
+- ✅ \`./scripts/orca/worker-start.sh ...\`
+- ✅ \`orca orchestration send ...\`           → orca 자체는 bash 필요 없음
+
+이 패턴은 T022 planner, T025 qa 에서 반복 발생한 결함입니다. kiro-cli 환경에서 특히 자주 터지지만, 어떤 agent 든 shell 명령 호출 시 \`bash\` 접두어 쓰지 말 것.
+
 ## ⚠️ Coordinator 는 \`ask\` 호출 금지
 
 \`orca orchestration ask\` 는 **supervised Dispatch 안의 worker 만** 호출 가능합니다. Coordinator (= Run owner) 는 Dispatch 가 아니므로 \`ask\` 호출 시 \`supervised Dispatch 필요\` 에러.

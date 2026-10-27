@@ -38,8 +38,33 @@ info() { echo "→ $*"; }
 # ─────────────────────────────────────────────────────────────
 
 # payload 는 JSON 안에 escaped string 으로 들어있음. 두 번째 레벨에서 파싱.
+# Orca 메시지 포맷이 변동 가능 — 여러 키 fallback (type / messageType / kind) +
+# payload escaped 안쪽까지 체크.
 extract_type() {
-  echo "$1" | grep -oE '"type"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/'
+  local msg="$1" t
+  # 1. top-level "type"
+  t=$(echo "$msg" | grep -oE '"type"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+  # 2. "messageType"
+  [[ -z "$t" ]] && t=$(echo "$msg" | grep -oE '"messageType"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+  # 3. "kind" (일부 orchestration 메시지)
+  [[ -z "$t" ]] && t=$(echo "$msg" | grep -oE '"kind"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+  # 4. payload escaped 안의 type
+  [[ -z "$t" ]] && t=$(echo "$msg" | grep -oE '\\\\"type\\\\":[[:space:]]*\\\\"[^\\\\]+\\\\"' | head -1 \
+    | sed -E 's/.*\\"([^\\]+)\\".*/\1/')
+  # 5. message.type (nested)
+  [[ -z "$t" ]] && t=$(echo "$msg" | python -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    for path in [['type'], ['message','type'], ['result','type'], ['result','message','type']]:
+        v = d
+        for k in path:
+            if isinstance(v, dict) and k in v: v = v[k]
+            else: v = None; break
+        if v: print(v); break
+except Exception: pass
+" 2>/dev/null)
+  echo "$t"
 }
 
 # deliveryId 추출 — Coordinator 가 다음 check 호출에 --ack <id> 로 포함해야
@@ -229,6 +254,25 @@ handle_worker_done() {
   if [[ -z "$next" ]]; then
     info "  모든 required_roles 소진. task 완료."
     "$SCRIPT_DIR/chat.sh" append "$task_id" "$role" coordinator deliver "task $task_id 완료 (최종 role: $role)" >/dev/null 2>&1 || true
+
+    # Phase 4 O: task 완료 자동 cleanup — task.md 가 archive 안 돼서 수동 cleanup 반복 결함.
+    # reviewer 가 tasks.sh merge 호출했으면 main 쪽 task.md 가 archive 로 가야 함. 이중 체크:
+    local main_task_md
+    main_task_md="$(find "$TASKS_DIR" -maxdepth 1 -name "${task_id}-*.md" 2>/dev/null | head -1)"
+    if [[ -f "$main_task_md" ]]; then
+      info "  task.md archive 자동 이동: $main_task_md → .harness/archive/"
+      mkdir -p "$MAIN_REPO_ROOT/.harness/archive"
+      mv "$main_task_md" "$MAIN_REPO_ROOT/.harness/archive/"
+      # chat 파일들 archive
+      for suffix in jsonl slack role-history.jsonl; do
+        [[ -f "$CHAT_DIR/${task_id}.${suffix}" ]] && mv "$CHAT_DIR/${task_id}.${suffix}" "$MAIN_REPO_ROOT/.harness/archive/"
+      done
+      rm -f "$CHAT_DIR/${task_id}.handles" "$CHAT_DIR/${task_id}.processed-dispatches"
+      rm -f "$MAIN_REPO_ROOT/.harness/coord/relay-thread-${task_id}.cursor"
+      # 자동 커밋 (hook 우회)
+      (cd "$MAIN_REPO_ROOT" && git add -A && git -c core.hooksPath=/dev/null commit -m "${task_id} [harness]: auto-archive after task-complete" >/dev/null 2>&1) || true
+    fi
+
     echo "ACTION: task-complete T=$task_id"
     return 0
   fi
@@ -361,7 +405,29 @@ case "$cmd" in
       question)    handle_question "$msg" ;;
       escalation)  handle_escalation "$msg" ;;
       heartbeat)   echo "ACTION: heartbeat" ;;
-      *)           echo "ACTION: unknown type=$type" ;;
+      *)
+        # Unknown type — 메시지 포맷이 예상과 다름. Slack 에 raw 포스트해
+        # 사용자가 수동 응답/판단 가능하도록. 활성 task 1개 fallback 적용.
+        dump_debug "$msg" unknown
+        task_id="$(single_active_task 2>/dev/null)" || task_id=""
+        if [[ -n "${SLACK_BOT_TOKEN:-}" && -n "${SLACK_CHANNEL_ID:-}" ]]; then
+          thread_ts=""
+          [[ -n "$task_id" && -f "$CHAT_DIR/$task_id.slack" ]] && thread_ts="$(cat "$CHAT_DIR/$task_id.slack")"
+          raw_dump="$(echo "$msg" | head -c 1500)"
+          text="⚠️ *미인식 메시지 타입* $([ -n "$task_id" ] && echo "— *$task_id*")
+coord-step.sh 가 type 추출 실패. raw 참고:
+\`\`\`
+$raw_dump
+\`\`\`
+사용자가 수동으로 Coordinator 세션에 응답하거나, 로그 확인 후 결정하세요."
+          if [[ -n "$thread_ts" ]]; then
+            "$MAIN_REPO_ROOT/scripts/slack/send.sh" --text "$text" --thread "$thread_ts" >/dev/null 2>&1 || true
+          else
+            "$MAIN_REPO_ROOT/scripts/slack/send.sh" --text "$text" >/dev/null 2>&1 || true
+          fi
+        fi
+        echo "ACTION: unknown type=$type (Slack raw 포스트됨)"
+        ;;
     esac
     # Coordinator 가 다음 check 에 --ack 로 포함해야 재배포 멈춤.
     # type 에 관계없이 (heartbeat 포함) delivery_id 가 있으면 ack 지시 출력.

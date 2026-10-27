@@ -24,6 +24,16 @@ cat <<EOF
 
 그 다음 \`.harness/roles/${ROLE}.md\` 지침대로 작업하세요.
 
+## ⚠️ Shell 명령 — \`bash\` 접두어 절대 금지
+
+하네스 스크립트 호출 시 **\`bash\` 를 명시하지 마세요**:
+
+- ❌ \`bash ./scripts/chat.sh append ...\` → Windows kiro-cli 에서 WSL /bin/bash 로 fallback → \`No such file or directory\` 실패
+- ✅ \`./scripts/chat.sh append ...\`     → shebang 가 자동 처리
+- ✅ \`orca orchestration send ...\`     → orca 는 bash 필요 없음
+
+이 패턴은 T022/T025 에서 반복 발생한 결함입니다. **반드시** 직접 호출 (shebang 라우팅 신뢰).
+
 ## 중요 원칙
 
 - **역할 경계** 지키기 (role.md 상단 참조). 범위 밖 리팩터 금지 (YAGNI).
