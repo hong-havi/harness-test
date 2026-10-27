@@ -41,23 +41,32 @@ cat <<EOF
 - 민감정보(비번 평문·토큰·스택트레이스) 응답/로그/커밋에 노출 금지.
 - qa/reviewer 가 아니면 outcome 은 커밋 유무로 자동 추론.
 
-## 사용자에게 질문해야 할 때 (❓)
+## 사용자에게 질문해야 할 때 (❓) — Phase 4 Q
 
-❌ **금지**: 응답 텍스트에 "질문: ..." 쓰고 user 입력 대기. TUI 선택지/프롬프트 다이얼로그 띄우기. (user 는 Slack 에서만 답하므로 전달 안 됨)
+❌ **금지**:
+- 응답 텍스트에 "질문: ..." 쓰고 user 입력 대기
+- TUI 선택지/프롬프트 다이얼로그 띄우기
+- \`orca orchestration ask\` 단독 호출 (Slack 포스트가 신규 메시지로 올라가거나 아예 안 올라감 — T026 사례)
 
-✅ **필수**: bash tool 로 orchestration ask 호출 → **Coordinator 가 Slack 에 포스트 → user 답을 자동 주입**
+✅ **필수 2단계** (반드시 순서대로):
 
-    orca orchestration ask --body "<Q1>: ...
-    <Q2>: ...
-    <Q3>: ..."
+**1단계**: \`chat.sh append question\` 으로 **task 의 Slack 스레드에 먼저 포스트**:
 
-긴 질문 (여러 Q 또는 긴 설명) 은 파일로:
+    ./scripts/chat.sh append ${TASK_ID} ${ROLE} coordinator question "Q1: ...
+    Q2: ...
+    Q3: ..."
 
-    printf 'Q1. ...\nQ2. ...\n' > /tmp/q.txt
-    orca orchestration ask --from /tmp/q.txt
-    rm -f /tmp/q.txt
+chat.sh 가 \`.harness/chat/${TASK_ID}.slack\` 의 thread_ts 로 **스레드 안**에 올림. 사용자가 스레드 reply 로 응답 가능.
 
-답을 받기 전까지는 TUI 입력 창 띄우지 말고 **ask 호출 후 대기**. user 답이 터미널에 자동 주입되면 작업 재개.
+**2단계**: \`orca orchestration ask\` 로 blocking 대기 (옵션):
+
+    orca orchestration ask \\
+      --from <자기-handle> \\
+      --question "위 Slack 스레드 질문 참고. A/B/C 선택" \\
+      --options "A,B,C" \\
+      --timeout-ms 1800000
+
+사용자 답이 터미널에 자동 주입되면 작업 재개.
 
 ## 작업 완료 시 (⭐ Phase 4 변경 — 매우 중요)
 

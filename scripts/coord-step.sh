@@ -345,13 +345,24 @@ task_id_for_sender() {
 post_slack_question() {
   local task_id="$1" body="$2" sender="$3" kind="${4:-question}"
   [[ -z "${SLACK_BOT_TOKEN:-}" || -z "${SLACK_CHANNEL_ID:-}" ]] && return 0
+
+  # Phase 4 Q: task_id 비면 활성 task 1개 fallback 강제.
+  # senderId → dispatch_id 매핑이 실패해도 활성 task 가 1개면 그걸로.
+  if [[ -z "$task_id" ]]; then
+    task_id="$(single_active_task 2>/dev/null)" || task_id=""
+  fi
+
   local header="🔔 *응답 필요*"
   [[ "$kind" == "escalation" ]] && header="🚨 *긴급 — escalation*"
   local tid_hint=""
   [[ -n "$task_id" ]] && tid_hint=" — *$task_id*"
+
   # task 의 Slack 스레드로 reply (chat.sh 가 저장한 thread_ts 재사용)
   local thread_ts=""
-  [[ -n "$task_id" && -f "$CHAT_DIR/$task_id.slack" ]] && thread_ts="$(cat "$CHAT_DIR/$task_id.slack")"
+  if [[ -n "$task_id" && -f "$CHAT_DIR/$task_id.slack" ]]; then
+    thread_ts="$(cat "$CHAT_DIR/$task_id.slack")"
+  fi
+
   local text="$header$tid_hint
 
 $body
@@ -359,9 +370,14 @@ $body
 응답 방법:
 • 스레드 reply 로 직접 답 (예: \`merge\`, \`no\`, \`rework\`) — 자동 인식
 • 또는 \`@harness-bot ${task_id:-T###} <답>\`"
+
   if [[ -n "$thread_ts" ]]; then
     "$MAIN_REPO_ROOT/scripts/slack/send.sh" --text "$text" --thread "$thread_ts" >/dev/null 2>&1 || true
   else
+    # 신규 메시지로 가는 경우 → 이게 문제 (사용자 추적 어려움)
+    # task_id 가 있는데 .slack 파일이 없는 상황 (chat.sh 가 아직 안 호출됐을 때)
+    # → 명시적으로 로그.
+    echo "⚠ Slack thread_ts 없음 (task_id=$task_id). 신규 메시지로 포스트 — Phase 4 Q 가드가 fallback 못 함." >&2
     "$MAIN_REPO_ROOT/scripts/slack/send.sh" --text "$text" >/dev/null 2>&1 || true
   fi
 }
