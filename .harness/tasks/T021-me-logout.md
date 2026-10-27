@@ -12,7 +12,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: qa
+current_role: reviewer
 role_history:
   - { role: architect, agent: kiro, at: 2026-10-27, note: "Design 섹션 작성, Q1/Q2 확정" }
 ports:
@@ -332,25 +332,42 @@ POST /auth/logout  (JWT 있음, CSRF 헤더 없음) → 403
 ---
 
 ## Review notes
-<reviewer 작성>
+
+> reviewer (kiro) — 2026-10-27. task.md 전체 + `git diff main..HEAD` + PRD 를 7개 영역 체크리스트로 리뷰하고, 테스트/타입체크/린트를 로컬에서 직접 재실행하여 QA 리포트를 독립 검증. 결과: **pass (approve for merge)**. Blocker 없음.
 
 ### 결과
-- 결정: pass | rework
-- 일자: YYYY-MM-DD
-- 병합 SHA: <sha> (pass 시)
+- 결정: **pass** (approve for merge — user 배포 승인 대기 중)
+- 일자: 2026-10-27
+- 병합 SHA: <merge 후 기록>
+
+### 변경 범위 (merge-base..HEAD — T021 가 실제 저작한 것)
+- `apps/api/src/auth/auth.controller.ts` — `logout` 가드에 `CsrfGuard` 추가 (`@UseGuards(JwtAuthGuard, CsrfGuard)`), import 1줄. 쿠키 만료 로직은 기존 스텁 유지.
+- `apps/api/src/auth/auth.controller.spec.ts` — 신규. logout 쿠키 만료 unit test (5건).
+- `.harness/tasks/T021-me-logout.md` — task 문서 (planner~reviewer 섹션).
+- 범위 밖 코드 파일 변경 **없음** (apps/web 은 기존 T002/T003 자산 재사용 — 신규/수정 0건, frontend 가 계약 적합성만 검증).
+
+### 독립 검증 (reviewer 가 직접 실행)
+- `pnpm --filter api test` → **4 suites / 37 tests 전부 통과** (`auth.controller.spec.ts`, `csrf.guard.spec.ts` 포함). QA 리포트 수치와 일치.
+- `pnpm --filter api typecheck` → 통과 (tsc 에러 0).
+- `pnpm --filter web typecheck` → 통과.
+- `pnpm --filter web lint` → ✔ No ESLint warnings or errors.
+- `grep console.log apps/api/src/auth/` → 없음. `.env`/`.env.*` git 추적·diff 없음.
 
 ### Blocker
-- 없음 또는
-- `file.ts:42` — <문제>, <수정 가이드>
+- 없음.
 
-### Suggest
-- `file.ts:88` — <개선 아이디어>
+### Suggest (선택 — pass 에 영향 없음)
+- `apps/api/src/auth/csrf.guard.ts:20` — CSRF 비교가 `timingSafeEqual` 이전에 `cookieToken.length !== headerToken.length` 로 조기 반환하여 토큰 길이 side-channel 이 미세하게 존재. **pre-existing 공유 가드**(T021 범위 밖)이며 일반적 관행 수준. 별도 보안 하드닝 task 로 고려 가능.
+- (인프라, QA N1 재확인) 프로덕션 runtime 이미지에 `ts-node` 부재로 `migration:run` 이 docker-only 기동에서 실패하는 pre-existing 갭. T021 과 무관(스키마 변경 없음)하나, 별도 task 로 `migration:run:prod`(compiled JS data-source) 또는 기동 시 `migrationsRun` 권장.
+
+### 머지 참고 (rebase 충돌 안내)
+- 본 브랜치는 fork 이후 main 이 독립 전진하여 **`.harness/tasks/T021-me-logout.md` 에 add/add rebase 충돌**이 예상됨 (양쪽이 동일 task 문서의 서로 다른 단계를 기록). 충돌 영역은 T021 자기 소유 문서이며, 완전판(planner~reviewer 전 섹션)인 **본 브랜치 버전을 채택**하여 해결 가능 — 범위 내 충돌. reviewer 가 rebase 수행 시 ours(브랜치) 우선 + merge 로 해소.
 
 ### 체크리스트 요약
-- PRD 정합성: ✅
-- 보안: ✅
-- 리소스/누수: ✅
-- 성능/데이터: ✅
-- 코드 품질: ✅
-- 테스트: ✅
-- 범위: ✅
+- PRD 정합성: ✅ (CSRF 적용 §3.4/§9, `{ok:true}`+200 §5.1, 범위 밖 미포함)
+- 보안: ✅ (쿠키 속성 login 대칭, httpOnly 분리, timingSafeEqual, 평문 비노출)
+- 리소스/누수: ✅ (logout/page.tsx useEffect cleanup, stateless)
+- 성능/데이터: ✅ (DB/마이그레이션 변경 없음)
+- 코드 품질: ✅ (최소 변경, console.log 없음, 커밋 접두어 준수)
+- 테스트: ✅ (37/37 통과 — 직접 재실행 검증)
+- 범위: ✅ (브랜치 저작 3파일, 전부 범위 내)
