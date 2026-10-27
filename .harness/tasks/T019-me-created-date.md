@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,  agent: kiro }
   - { role: qa,        agent: kiro }
   - { role: reviewer,  agent: kiro }
-current_role: frontend
+current_role: qa
 role_history: []
 ports:
   web: 3190
@@ -118,3 +118,60 @@ updated_at: 2026-10-27
    로컬 날짜가 +1 일로 표시되는지 확인 (UTC 절단이면 하루 어긋남 → 버그).
 4. DevTools Console 에서 `document.cookie` 조회 → `access_token` 미노출 (HttpOnly 유지, 회귀 확인용).
 5. (선택) 비정상 createdAt 방어: 정상 경로에선 재현 불가하나, 코드상 NaN 시 원본 반환으로 페이지 비파괴.
+
+
+
+## QA report
+
+### 결정: PASS → reviewer
+
+frontend-only 날짜 포맷 변경. 수용 기준은 전부 client-side `formatDateYmd` 출력에 대한
+결정적(deterministic) 검증이므로, 실제 소스 로직을 그대로 Node(TZ=Asia/Seoul, offset -540 확인)
+에서 실행하여 전수 검증 + 프로젝트 lint/typecheck/next build 로 교차 확인했다.
+
+### 1. 수용 기준 (task.md Acceptance) — 전수 PASS
+- [PASS] '가입일' 값이 `^\d{4}-\d{2}-\d{2}$` 매칭 (시각 미표시).
+  검증: `formatDateYmd('2024-01-15T06:30:00Z')` → `2024-01-15` (regex 매칭).
+- [PASS] 브라우저 로컬 TZ 기준 변환.
+  검증(KST): `2024-01-15T23:30:00Z` → `2024-01-16` (UTC 날짜 `01-15` 아님 — 경계 올바름).
+  `2024-01-15T06:30:00Z` → `2024-01-15` (같은 날 15:30 로컬).
+- [PASS] zero-pad 2자리.
+  검증: `2024-03-05T03:00:00Z` → `2024-03-05`.
+- [PASS] '최근 수정'(updatedAt) 회귀 없음.
+  검증: `formatDate('2024-01-15T23:30:00Z')` → 날짜+시각(`toLocaleString('ko-KR')`), YYYY-MM-DD 아님.
+  git diff 확인: updatedAt 렌더는 여전히 `formatDate()` 사용, 변경 없음.
+- [PASS] 비정상 createdAt 방어.
+  검증: `'not-a-date'`/`''` → 원본 문자열 그대로 반환 (NaN 가드), 페이지 비파괴.
+- [PASS] frontend-only (apps/api / DB 변경 커밋 없음).
+  검증: `git diff --name-only main..HEAD` → `apps/web/app/me/page.tsx` + task.md 만. API/DB/migration/lib/types.ts 무변경.
+- [EXTRA PASS] 연 경계: `2024-12-31T15:00:00Z` (KST) → `2025-01-01`.
+
+검증 결과: 결정적 로직 테스트 9/9 PASS (TZ=Asia/Seoul).
+
+### 2. 회귀 (Regression)
+- [PASS] '최근 수정'(updatedAt) 표시 포맷 유지 — 위 참조.
+- [PASS] `next build` 전체 성공, `/me` 라우트 포함 9개 페이지 컴파일 (2.38 kB).
+
+### 3. 비기능
+- [PASS] lint — `next lint` → "No ESLint warnings or errors".
+- [PASS] typecheck — `tsc --noEmit` → exit 0.
+- [PASS] `dangerouslySetInnerHTML` 미사용 (신규 코드는 순수 문자열 포맷, XSS 경로 없음).
+- [N/A 이번 변경과 무관] HttpOnly 쿠키/상태코드/401/403/CSRF — 본 변경은 백엔드·인증 경로를
+  건드리지 않음(frontend 표시 로직만). 라이브 docker UAT 미수행(아래 한계 참조).
+
+### 4. 환경 — 라이브 docker UAT 미수행 (한계 명시)
+- Docker Desktop 가용(29.1.2) 하나, 이 worktree `.env` 는 포트 스코프만 포함하고
+  `JWT_SECRET`/`DB_PASSWORD` 등 compose 필수 시크릿이 없어 end-to-end 기동(이미지 빌드 +
+  migration + 로그인 → /me) 을 안전하게 수행할 수 없음(시크릿 임의 생성 지양).
+- 다만 본 task 의 수용 기준은 전부 결정적 client-side 포맷 출력이며, 실제 소스 로직을
+  그대로 실행 검증 + next build 산출물 확인으로 동등 보장됨. API/DB 계약 변경이 없어
+  런타임 기동이 새로 드러낼 동작은 없음.
+- reviewer/user 가 원하면 시크릿 포함 `.env` 로 `docker compose up` 후 `/me` 육안 확인 +
+  DevTools `document.cookie` HttpOnly 점검(회귀용)을 추가 라운드로 수행 가능.
+
+### 검증에 사용한 명령 (재현용)
+- 로직: `TZ=Asia/Seoul node <formatDateYmd 미러 스크립트>` (임시, 검증 후 삭제) → 9/9 PASS.
+- `cd apps/web && npx next lint` → clean.
+- `cd apps/web && npx tsc --noEmit -p tsconfig.json` → exit 0.
+- `cd apps/web && npx next build` → Compiled successfully, `/me` 포함.
+- `git diff --name-only main..HEAD` → frontend-only 확인.
