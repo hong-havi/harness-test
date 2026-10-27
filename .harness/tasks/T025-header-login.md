@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,  agent: kiro }
   - { role: qa,        agent: kiro }
   - { role: reviewer,  agent: kiro }
-current_role: qa
+current_role: reviewer
 role_history: []
 ports:
   web: 3250
@@ -197,3 +197,58 @@ docker compose up              # web+api+db 기동 (현재 worktree 포트)
 ### reviewer 참고
 - 순수 리네임이므로 동작 보존(로그아웃 플로우·분기)과 잔여 `Nav` 참조 0 을 집중 확인 → 모두 PASS.
 - 커밋 변경 파일은 `apps/web` + task.md 뿐. 범위 밖 변경 없음.
+
+
+## Review notes
+
+### 결정: **PASS (approve for merge)** — Blocker 0
+
+순수 리네임 리팩터(Nav → Header). 7개 영역 체크리스트 전수 수행, diff·grep·build 로 근거 확인. 동작/마크업 보존 확인됨.
+
+### 체크리스트 결과 (근거 포함)
+
+**1. PRD 정합성**
+- [PASS] 요청 기능(로그인 시 `{nickname}님`+로그아웃, 비로그인 시 로그인/회원가입)은 기존 Nav 에 이미 구현. 본 task 는 사용자 확인(옵션 A)대로 리네임만 수행.
+- [PASS] 범위 밖 기능 혼입 없음 — diff 는 `apps/web` 4파일 + harness bookkeeping 뿐.
+- [PASS] API 계약 변경 없음 (백엔드 무변경).
+
+**2. 보안**
+- [PASS] 비밀번호/토큰 평문 노출 없음 — logout 플로우는 `api.logout()` 래퍼에 위임, 변경 없음.
+- [PASS] JWT 쿠키 속성 로직 불변 (리네임이 쿠키 처리에 손대지 않음). QA 런타임 검증: `access_token` HttpOnly 미노출, 로그아웃 후 쿠키 제거 확인.
+- [PASS] 상태변경 라우트(logout) 는 기존 api 래퍼 경유 — CSRF/credentials 처리 불변.
+- [PASS] DTO/검증은 백엔드 담당, 변경 없음.
+- [PASS] 에러 메시지에 민감정보 없음.
+- [PASS] XSS/SQLi/인젝션 — `dangerouslySetInnerHTML` 미사용, 사용자 입력 직접 삽입 없음.
+- [PASS] `.env`/`.env.*` 가 diff 에 없음 (`git diff --name-only` 확인). 시크릿 누수 0.
+- [PASS] CORS 변경 없음 (범위 밖).
+
+**3. 리소스/누수**
+- [PASS] `useEffect` cleanup/리스너 — 기존 Nav 로직 보존(리네임이 effect 구조 미변경). 열린 리소스 신규 추가 없음.
+- [PASS] Promise 체인 — logout 핸들러의 `await api.logout()` 보존, unhandled rejection 신규 도입 없음.
+
+**4. 성능/데이터**
+- [PASS] 쿼리/인덱스/페이지네이션/마이그레이션 — 범위 밖(백엔드 무변경). 해당 없음.
+
+**5. 코드 품질**
+- [PASS] 단일 책임 유지. 명명 개선(`Nav`→`Header`, `.nav*`→`.header*`)으로 의도 명확화.
+- [PASS] 과도한 추상화/플래그 없음 (YAGNI 준수).
+- [PASS] 미사용 import/변수 없음. `console.log`/디버그 코드 0 (grep 확인).
+- [PASS] 커밋 메시지 접두어 `T025 [kiro]:` 전 커밋 준수.
+
+**6. 테스트**
+- [PASS] 프로젝트에 테스트 프레임워크 부재 → 빌드 성공 + grep 잔여참조 0 + 전체스택(Docker) 런타임 2케이스로 대체. QA report = PASS.
+
+**7. 범위**
+- [PASS] 태스크 범위 밖 리팩터/수정 없음. `<nav>` 시맨틱 태그 유지는 접근성상 올바르며 스펙상 제외 대상.
+
+### 독립 재검증 (reviewer 직접 수행)
+- `git diff main..HEAD -- apps/web/` → 순수 리네임만 (rename similarity 90%, 함수명/className/CSS/주석/import 일치 변경).
+- `grep 'components/Nav|<Nav|function Nav(|import Nav'` → **0건**.
+- `grep '\.nav' globals.css` → **0건**, `.header/.header__brand/.header__links` 3건 존재 + 컴포넌트 className 과 일치.
+- `pnpm --filter web run build` → "✓ Compiled successfully", 타입/린트 통과, 9/9 static pages, 에러 0.
+
+### Suggest (선택 — merge 차단 아님)
+- `logout/page.tsx`/`Header.tsx` 의 favicon 404(QA note) 는 범위 밖 cosmetic — 별도 task 로.
+
+### 병합 메모
+- ff-only 전제: `task/T025-header-login` 는 main 의 task-생성 커밋(`9e0a4b5`)보다 이전에서 분기 → task.md 에 add/add 충돌 1건 예상(harness bookkeeping 파일 한정, 소스코드 충돌 없음). `tasks.sh merge` 의 rebase 단계에서 해당 파일은 **task 브랜치 버전(전체 Plan/Impl/QA/Review 내용) 채택**으로 해결 가능(자기 영역).
