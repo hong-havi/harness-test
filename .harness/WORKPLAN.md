@@ -367,6 +367,26 @@ agent 작업 흐름:
 
 ---
 
+### Phase 4 C — Slack → Coordinator relay (2026-10-27 완료)
+
+Phase 4 B 재설계로 bash `coord.sh` 가 폐기되면서, Slack listener (`slack/listen.sh`) 가 받은 user 메시지를 Coordinator 로 라우팅할 주체가 사라졌다. (Harness → Slack 미러링은 chat.sh send 로 유지)
+
+해결: `scripts/slack/relay.sh` 신규 — Slack polling 데몬.
+- 봇 멘션 메시지 N초 polling (기본 5초, `SLACK_RELAY_POLL_INTERVAL` 로 조정)
+- 본문의 `T### ` 패턴으로 task-id 추출. 없으면 활성 task 1개면 그걸로, 다수면 skip.
+- 해당 task 의 handles 에서 coordinator handle 조회 → `orca terminal send --terminal <handle> --text <msg> --enter` 로 주입
+- 봇 멘션 토큰 (`<@Uxxx>`) 과 선행 `T###` 는 제거해 자연 명령만 전달
+- 커서 파일 `.harness/coord/relay.cursor` 로 재시작 안전
+- `start / stop / status / once` 서브커맨드. setsid+nohup 백그라운드
+
+사용법:
+
+    ./scripts/slack/relay.sh start      # 데몬 시작
+    ./scripts/slack/relay.sh status     # 상태 확인
+    ./scripts/slack/relay.sh stop       # 중지
+
+Slack 에서 `@harness-bot T020 merge` 라고 보내면 Coordinator 세션에 "merge" 로 주입됨.
+
 ### Phase 4 B 안정화 (2026-10-27 완료)
 
 - preamble 에 `task-complete` 수신 시 **Coordinator 메인 루프 종료** 명시 (reviewer merge 완료 후 세션이 영원히 돌지 않도록)
