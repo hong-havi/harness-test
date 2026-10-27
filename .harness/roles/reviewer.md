@@ -70,9 +70,11 @@
      2. chat `deliver` — 리뷰 결과 요약
      3. **`orca orchestration ask`** 로 사용자 배포 승인 요청:
         ```bash
-        printf 'Review pass:\n- 변경 N건\n- 체크리스트 전수 통과\n\n📦 main 에 merge 할까요? (merge / no / rework)\n' > /tmp/approve.txt
-        orca orchestration ask --from /tmp/approve.txt
-        rm -f /tmp/approve.txt
+        orca orchestration ask \
+          --question "Review PASS (<task-id>): 변경 N건, 체크리스트 전수 통과, Blocker 0. main 에 merge 할까요?" \
+          --options "merge,no,rework" \
+          --timeout-ms 1800000
+        # (--from <file> 플래그는 지원 안 됨. --question "..." 로 직접 전달.)
         ```
      4. **대기**. 사용자 답이 터미널에 자동 주입됨.
      5. 사용자 답에 따라:
