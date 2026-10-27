@@ -4,7 +4,7 @@ title: 회원 로그아웃 버튼
 slug: me-logout
 branch: task/T021-me-logout
 worktree: .worktrees/T021-me-logout
-status: in-flight          # planning | in-flight | paused | merged | dropped
+status: merged          # planning | in-flight | paused | merged | dropped
 required_roles:
   - { role: planner,    agent: kiro }
   - { role: architect,  agent: kiro }
@@ -336,9 +336,9 @@ POST /auth/logout  (JWT 있음, CSRF 헤더 없음) → 403
 > reviewer (kiro) — 2026-10-27. task.md 전체 + `git diff main..HEAD` + PRD 를 7개 영역 체크리스트로 리뷰하고, 테스트/타입체크/린트를 로컬에서 직접 재실행하여 QA 리포트를 독립 검증. 결과: **pass (approve for merge)**. Blocker 없음.
 
 ### 결과
-- 결정: **pass** (approve for merge — user 배포 승인 대기 중)
+- 결정: **pass** (merged — user 승인 "merge" 후 rebase + ff-only 병합 완료)
 - 일자: 2026-10-27
-- 병합 SHA: <merge 후 기록>
+- 병합 SHA: 5838334e2c34b9dcec59b0641e79e21e7be9f2e3 (ff-only, a5a8b54..5838334)
 
 ### 변경 범위 (merge-base..HEAD — T021 가 실제 저작한 것)
 - `apps/api/src/auth/auth.controller.ts` — `logout` 가드에 `CsrfGuard` 추가 (`@UseGuards(JwtAuthGuard, CsrfGuard)`), import 1줄. 쿠키 만료 로직은 기존 스텁 유지.
