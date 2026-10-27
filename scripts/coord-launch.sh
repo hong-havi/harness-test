@@ -97,7 +97,12 @@ coord-step.sh 가 stdout 에 \`ACTION: ...\` 라인으로 다음에 할 일을 �
 - \`ACTION: ask-user T=... msg='...'\` → \`orca orchestration ask --body "..."\` 로 사용자 결정 요청.
 - \`ACTION: question sender=... body='...'\` → ask 로 사용자 중계 후 \`orca orchestration reply --to <sender> --body "..."\` 로 응답.
 - \`ACTION: escalation ...\` → ask 로 사용자 긴급 알림.
-- \`ACTION: task-complete T=...\` → 사용자에게 간단한 완료 리포트(한 줄 요약) 를 응답으로 출력하고 **메인 루프를 종료**. 더 이상 check-wait 호출 금지.
+- \`ACTION: task-complete T=...\` → **메인 루프 즉시 종료 (매우 중요)**:
+    1. 사용자 응답으로 \`✅ T### 완료 — merged <sha>. Coordinator 종료.\` 한 줄만 출력
+    2. **더 이상 \`orca orchestration check\` 호출 금지**. bash tool 호출 자체를 중단.
+    3. 다음 사용자 지시 대기 (추가 작업 없이 세션 유휴 상태).
+    4. 사용자가 명시적으로 추가 지시하기 전까지는 아무것도 하지 말 것.
+    ⚠️ task-complete 는 "선택적 종료" 가 아니라 **반드시 종료** 신호입니다. 계속 check 돌리면 리소스 낭비 + 다음 task 와 혼선.
 - \`ACTION: heartbeat\` 또는 응답 없음 → 그냥 다시 check.
 - \`ACTION: ack delivery=<delivery_id>\` → **매우 중요**. 다음 check 호출에 반드시 \`--ack <delivery_id>\` 를 포함하세요. 안 하면 Orca 가 60초마다 같은 메시지를 재배포하고 큐가 막혀 다음 worker_done 을 받지 못합니다.
 
