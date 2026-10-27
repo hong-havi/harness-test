@@ -4,7 +4,7 @@ title: /me 가입일을 YYYY-MM-DD(로컬 TZ) 포맷으로 표시
 slug: me-created-date
 branch: task/T019-me-created-date
 worktree: .worktrees/T019-me-created-date
-status: planning          # planning | in-flight | paused | merged | dropped
+status: merged            # planning | in-flight | paused | merged | dropped
 required_roles:
   - { role: planner,   agent: kiro }
   - { role: frontend,  agent: kiro }
