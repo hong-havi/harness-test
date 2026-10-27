@@ -6,6 +6,7 @@ branch: task/T027-signup-terms-check
 worktree: .worktrees/T027-signup-terms-check
 status: in-flight          # planning | in-flight | paused | merged | dropped
 required_roles:
+required_roles:
   - { role: planner,    agent: kiro }
   - { role: architect,  agent: kiro }
   # - { role: designer,   agent: kiro, mcp: [figma] }  # 신규 비주얼 시스템 없음 — 기존 .field/.btn 스타일 재사용
@@ -13,8 +14,8 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: frontend
-role_history: []
+current_role: qa
+role_history: [frontend]
 run_id: run_121330acb86b
 ports:
   web: 3270
@@ -214,7 +215,40 @@ pnpm --filter web build       # /signup 컴파일 성공
 ---
 
 ## QA report
-<qa 작성>
+
+### 환경
+- 정적 검증: `pnpm install` 후 web 워크스페이스 typecheck / lint / build.
+- 런타임 검증: `next start` (PORT=3270) 로 web 단독 기동 후 Playwright 브라우저로 `/signup` 상호작용.
+- 참고: backend/API 역할 미실행(T027 scope 제외)이라 API 서버는 기동하지 않음. 본 변경은 서버 계약 변경 없는 프런트 consent 게이트라 web 단독 검증으로 수용 기준 전수 커버 가능.
+
+### 1. 수용 기준 (task.md Acceptance)
+- [x] **AC1** `/signup` 에 이용약관 동의 체크박스 표시 — 브라우저 스냅샷에서 `checkbox "이용약관에 동의합니다. (필수)"` 확인. HTTP 200, HTML 에 `agreeTerms` + `이용약관` 포함.
+- [x] **AC2** 미체크 시 "가입하기" 버튼 비활성화 — 초기 상태 `button "가입하기" [disabled]`. 모든 입력 필드를 채운 상태에서도 체크박스 미체크면 `buttonDisabled: true` (게이트가 체크박스에 의해 구동됨을 분리 확인).
+- [x] **AC3** 체크 시 버튼 활성화 — 체크박스 click 후 `buttonDisabled: false, checkboxChecked: true`. 체크 해제 시 다시 `buttonDisabled: true` (토글 동작 확인).
+- [x] **AC4** 미동의 제출 차단(이중 방어) — disabled 를 우회해 `form.requestSubmit()` 강제 제출 시 alert `"이용약관에 동의해야 가입할 수 있습니다."` 노출, 제출 중단(onSubmit early return).
+
+### 2. 회귀 (Regression)
+- [x] `/signup` 페이지 렌더 정상 — 기존 아이디/비밀번호/닉네임 필드 + 힌트, 로그인 링크 모두 유지.
+- [~] 가입→로그인→작성→조회 end-to-end: backend API 미기동으로 이번 라운드 미수행(scope 외). 본 변경은 기존 `api.signup()` 호출·`/login?signup=1` 리다이렉트 로직을 변경하지 않음(코드 diff 상 확인).
+
+### 3. 비기능
+- [x] 빌드 산출: `/signup` 1.95 kB, 정적 프리렌더(○) — 정상.
+- [x] 사용자 입력 React 기본 escape, `dangerouslySetInnerHTML` 미사용.
+- [~] HttpOnly 쿠키 미노출 / 상태코드 규약 / 401·403·CSRF: 인증·API 플로우라 backend 기동 필요. T027 scope(프런트 체크박스)와 무관하며 backend 역할 미실행이라 이번 라운드 대상 아님.
+- 참고(비차단): 콘솔 에러 2건 관찰 — `favicon.ico 404`(cosmetic), `/api/members/me 500`(backend 미기동으로 인한 전역 nav 인증 호출 실패). 둘 다 본 기능과 무관한 환경 아티팩트.
+
+### 4. 환경
+- [x] web 워크스페이스 단독 기동/정지 정상. (전체 `docker compose up` 은 backend scope 외라 미수행)
+
+### 정적 검증 결과
+```
+pnpm --filter web typecheck → 통과 (tsc --noEmit)
+pnpm --filter web lint      → ✔ No ESLint warnings or errors
+pnpm --filter web build     → ✓ Compiled successfully (/signup 1.95 kB)
+```
+
+### 결정: **PASS**
+수용 기준 4/4 런타임 검증 통과, 정적 검증 전부 통과. 회귀/비기능 중 인증·API 의존 항목은 backend 역할 미실행(T027 scope 제외)으로 이번 라운드 대상 아님 — 본 프런트 consent 게이트 변경과 무관. reviewer 로 핸드오프.
 
 ---
 
