@@ -13,7 +13,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: planner
+current_role: architect
 role_history: []
 run_id: run_121330acb86b
 ports:
@@ -89,30 +89,78 @@ _(T027 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 ---
 
 ## Design
-<architect 작성>
+
+> **설계 범위**: 프론트엔드 전용 제출 게이트 1건. Plan 의 Scope 를 그대로 수용한다.
+> 백엔드/DB/API 계약 **변경 없음** — 따라서 데이터 모델·API 계약·마이그레이션 섹션은 **해당 없음(N/A)**.
+> 대상 파일: `apps/web/app/signup/page.tsx` (단일 컴포넌트), 필요 시 `apps/web/app/globals.css` 소폭.
 
 ### 데이터 모델
-<엔티티/스키마 변경 — DDL 수준>
+- **N/A** — 멤버 스키마(PRD §3.1) 불변. 동의 여부를 서버에 전송/영속하지 않는다.
 
 ### API 계약
-| Method | Path | Auth | 요청 DTO | 응답 | 상태 코드 |
+- **N/A** — `/auth/signup` 계약(PRD §5.1) 불변. `api.signup({ userId, password, nickname })` 호출 페이로드는 기존 그대로. `agreedToTerms` 는 **클라이언트 로컬 상태로만** 존재하며 요청에 포함하지 않는다.
 
-### 흐름
-- 1. ...
-- 2. ...
+### 컴포넌트 상태 설계 (client component)
+`SignupPage` 에 상태 1개 추가:
+
+| 상태 | 타입 | 초기값 | 의미 |
+|------|------|--------|------|
+| `agreedToTerms` | `boolean` | `false` | 이용약관 동의 체크 여부 (기본 미체크) |
+
+- 기존 상태(`userId`, `password`, `nickname`, `submitting`, `error`)는 변경 없음.
+- **파생 값**(새 상태 아님): `canSubmit = agreedToTerms && !submitting`.
+  - 제출 버튼 `disabled={!canSubmit}` → 미동의 또는 처리 중이면 비활성.
+  - (frontend 재량) 추가로 입력값 공란 검사까지 묶어도 무방하나, Plan 수용 기준은 "동의 게이트"가 핵심이므로 **필수는 `agreedToTerms` 게이트**다.
+
+### 마크업 / 접근성 계약
+제출 버튼 바로 위, 마지막 `.field`(nickname) 다음에 체크박스 블록 삽입:
+
+```
+<div className="field field--checkbox">
+  <input id="agreeTerms" type="checkbox"
+         checked={agreedToTerms}
+         onChange={(e) => setAgreedToTerms(e.target.checked)}
+         disabled={submitting} />
+  <label htmlFor="agreeTerms">이용약관에 동의합니다</label>
+</div>
+```
+
+접근성/동작 계약 (QA 검증 대상):
+- `<input id="agreeTerms">` ↔ `<label htmlFor="agreeTerms">` 연결 → **라벨 클릭으로 토글** 가능.
+- 체크박스는 네이티브 `<input type="checkbox">` 사용 → **Tab 포커스·Space 토글** 기본 보장. 커스텀 div 토글 금지.
+- 제출 버튼이 `disabled` 일 때 비활성 사유를 알리는 **인라인 안내 문구** 표시.
+  - 기본: 미동의 시 체크박스 아래 `.field__hint` 로 "가입하려면 이용약관에 동의해야 합니다." 상시 노출(동의하면 숨김) — 가장 단순·명확.
+  - (frontend 재량 2차) submit 시도 자체는 버튼 disabled 로 막히므로 `onSubmit` 진입 전 차단된다. 혹시 Enter 등으로 핸들러 진입 시를 대비해 `onSubmit` 최상단에 `if (!agreedToTerms) { setError('이용약관에 동의해주세요.'); return; }` 가드를 둘 수 있음(방어적, 선택).
+
+### 흐름 (제출 게이트)
+1. `/signup` 진입 → `agreedToTerms=false` → 버튼 `disabled`, 안내 문구 노출.
+2. 사용자가 체크박스/라벨 클릭 or Space → `agreedToTerms=true` → 버튼 활성, 안내 문구 숨김.
+3. '가입하기' 클릭 → 기존 `onSubmit` 그대로: `api.signup(...)` → 성공 시 `router.push('/login?signup=1')`, 실패 시 `.alert--error`.
+4. 체크 해제 → `agreedToTerms=false` → 버튼 다시 `disabled`.
 
 ### 보안 / 에러
-- 입력 검증 지점:
-- 권한 체크:
-- 에러 응답:
+- **입력 검증 지점**: 클라이언트 제출 게이트(UX). 서버측 실질 검증은 기존 `/auth/signup` DTO(PRD §3.2 F-M1)가 담당 — 이번 변경과 무관.
+- **민감정보 흐름**: 없음. 동의 플래그는 UI 로컬 상태일 뿐 서버/로그로 나가지 않음.
+- **권한 체크**: N/A (비인증 공개 페이지).
+- **주의**: 클라이언트 disabled 는 UX 게이트일 뿐 보안 경계가 아님. 그러나 "동의 기록 영속"은 Plan 에서 명시적 범위 밖이므로, 서버 강제 없음이 **의도된 설계**다. (향후 영속 필요 시 별도 task 로 `SignupDto.agreedToTerms` + 멤버 스키마 확장.)
 
-### 마이그레이션 (DB 변경 있을 때)
-- 이름: `<timestamp>-<name>`
-- Up: ...
-- Down: ...
+### 마이그레이션
+- **N/A** — DB 변경 없음.
 
-### 테스트 포인트
-- QA가 확인할 지점 ...
+### 테스트 포인트 (QA 참조)
+- [ ] `/signup` 초기 렌더: 체크박스 존재 + **미체크** + 제출 버튼 `disabled`.
+- [ ] 미동의 상태: 안내 문구("…동의해야 합니다") 노출, 버튼 클릭/Enter 로 `api.signup` 미호출(네트워크 요청 0건).
+- [ ] 체크 → 버튼 활성 → 정상 가입 → `/login?signup=1` 이동.
+- [ ] 체크 후 해제 → 버튼 다시 `disabled`.
+- [ ] 라벨 텍스트 클릭으로 토글, Tab 포커스 이동, Space 토글.
+- [ ] diff 에 `apps/api/` 변경 **없음** (백엔드 불변 회귀 확인).
+- [ ] 기존 회귀: userId/password/nickname 입력 + 성공/실패(에러 alert) 흐름 유지.
+
+### 다음 역할 핸드오프 (frontend)
+- 수정 파일: `apps/web/app/signup/page.tsx` (단일). `api.signup` 페이로드 **건드리지 말 것**.
+- 상태 1개 추가(`agreedToTerms`), 버튼 `disabled` 조건에 `!agreedToTerms` 결합, 네이티브 `<input type="checkbox">` + 연결 `<label>` 사용.
+- CSS: 기존 `.field`/`.field__hint` 재사용. 체크박스+라벨 가로 정렬이 어색하면 `globals.css` 에 `.field--checkbox { display:flex; align-items:center; gap:8px; }` + `.field--checkbox label { margin-bottom:0; }` 정도만 소폭 추가(선택). 범위 밖 스타일 리팩터 금지.
+- 약관 전문 링크: **미노출**(단순 라벨) — Plan Open Question 1 기본값 확정.
 
 ---
 
