@@ -6,7 +6,6 @@ branch: task/T027-signup-terms-check
 worktree: .worktrees/T027-signup-terms-check
 status: in-flight          # planning | in-flight | paused | merged | dropped
 required_roles:
-required_roles:
   - { role: planner,    agent: kiro }
   - { role: architect,  agent: kiro }
   # - { role: designer,   agent: kiro, mcp: [figma] }  # 신규 비주얼 시스템 없음 — 기존 .field/.btn 스타일 재사용
@@ -14,8 +13,8 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: qa
-role_history: [frontend]
+current_role: reviewer
+role_history: [frontend, qa]
 run_id: run_121330acb86b
 ports:
   web: 3270
@@ -253,4 +252,33 @@ pnpm --filter web build     → ✓ Compiled successfully (/signup 1.95 kB)
 ---
 
 ## Review notes
-<reviewer 작성>
+
+### 결과
+- 결정: **pass** (Blocker 0 / Suggest 2)
+- 일자: 2026-10-27
+- 병합 SHA: <merge 후 기재>
+
+### 체크리스트 요약 (파일:라인 근거)
+- **PRD 정합성 ✅** — 프런트 전용 consent 게이트. `apps/web/app/signup/page.tsx:12,19-22,96-116,118-122`. `api.signup({ userId, password, nickname })` 페이로드 불변(`page.tsx:28`) → PRD §5.1 signup 계약 유지. `apps/api/` diff 0건.
+- **보안 ✅** — 평문/토큰 노출 없음. React 기본 escape, `dangerouslySetInnerHTML` 미사용. diff 에 `.env`/`.env.*` 없음. CSRF/쿠키 처리는 기존 `lib/api.ts` 그대로(변경 없음). 클라이언트 `disabled` 는 UX 게이트일 뿐 보안 경계 아님 — "동의 영속 미구현"은 Plan 에서 의도된 범위 밖(설계상 OK).
+- **리소스/누수 ✅** — 신규 timer/listener/구독 없음. `useState` 1개 추가(`agreedToTerms`)로 cleanup 불필요.
+- **성능/데이터 ✅** — DB/쿼리/마이그레이션 변경 없음(N/A).
+- **코드 품질 ✅** — 단일 책임, 네이티브 `<input type="checkbox">` + `<label htmlFor>` 연결(접근성), `console.log`/디버그 코드 없음, 미사용 import/변수 없음. 커밋 접두어 `T027 [kiro]:` 준수.
+- **테스트 ✅** — QA report = PASS. AC 4/4 런타임(Playwright) 검증 + 정적(typecheck/lint/build) 통과 문서화(commit 9249ec8).
+- **범위 ✅** — 변경 파일 `apps/web/app/signup/page.tsx`, `apps/web/app/globals.css` 만. 범위 밖 리팩터 없음.
+
+### Blocker
+- 없음.
+
+### Suggest (비차단)
+- `page.tsx:118-122` — 미동의 사유 안내 문구(inline hint)가 체크박스 라벨 "(필수)" 로만 표현됨. architect Design 은 별도 `.field__hint` 상시 노출을 권장했으나, 라벨의 "(필수)" + 버튼 disabled 로 의도는 충분히 전달됨. 접근성 강화 원하면 후속에서 `aria-describedby` 힌트 추가 고려.
+- QA 라운드에서 backend 미기동으로 end-to-end(가입→로그인) 및 인증/쿠키 항목은 미검증. 본 변경이 해당 플로우 코드를 건드리지 않아 회귀 위험 낮음(diff 상 확인). 향후 통합 QA 라운드에서 커버 권장.
+
+### 리뷰어 검증 한계 (투명성)
+- 이 워크트리에 `node_modules` 부재 + 셸에 `pnpm`/`node` 미노출로 reviewer 가 typecheck/lint/build 를 **재실행하지 못함**. 정적 검증은 QA report(commit 9249ec8) 문서를 근거로 인정. 코드/diff 는 reviewer 가 직접 전수 확인함.
+
+### 병합 메모 (merge 수행자 주의)
+- main 과 branch 가 `.harness/tasks/T027-*.md` 를 **각자 생성**(add/add)해 split-brain 발생: main=planner+architect 경로(Plan/Design 섹션), branch=frontend-only 경로(Implementation/QA 섹션). rebase 시 task.md 에서 **add/add 충돌 1건** 발생 — 앱 코드(`page.tsx`/`globals.css`)는 branch 전용이라 충돌 없음. 두 문서의 union(main frontmatter+Plan+Design ∪ branch Implementation+QA+Review notes) 으로 해소. 동일 기능이므로 의미 충돌 아님.
+
+### 체크리스트 상태
+- PRD 정합성: ✅ / 보안: ✅ / 리소스·누수: ✅ / 성능·데이터: ✅ / 코드 품질: ✅ / 테스트: ✅ / 범위: ✅
