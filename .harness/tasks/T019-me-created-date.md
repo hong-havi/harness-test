@@ -1,18 +1,15 @@
 ---
 id: T019
-title: me-created-date
+title: /me 가입일을 YYYY-MM-DD(로컬 TZ) 포맷으로 표시
 slug: me-created-date
 branch: task/T019-me-created-date
 worktree: .worktrees/T019-me-created-date
 status: planning          # planning | in-flight | paused | merged | dropped
 required_roles:
-  - { role: planner,    agent: kiro }
-  - { role: architect,  agent: kiro }
-  # - { role: designer,   agent: kiro, mcp: [figma] }
-  - { role: backend,    agent: kiro }
-  # - { role: frontend,   agent: kiro }
-  - { role: qa,         agent: kiro }
-  - { role: reviewer,   agent: kiro }
+  - { role: planner,   agent: kiro }
+  - { role: frontend,  agent: kiro }
+  - { role: qa,        agent: kiro }
+  - { role: reviewer,  agent: kiro }
 current_role: planner
 role_history: []
 ports:
@@ -22,176 +19,62 @@ ports:
 compose_project: harness_t019
 figma_url: null
 blocked_by: []
-related_prd: []
+related_prd: ["3.1 데이터 모델", "5.1 Auth / Member (GET /members/me)"]
 priority: normal          # high | normal | low
 created_at: 2026-10-27
 updated_at: 2026-10-27
 ---
 
-## User Request
-
-> 회원 /me 페이지에 '가입일' 라벨 밑에 user.createdAt 을 YYYY-MM-DD 포맷(로컬 TZ) 으로 표시. 백엔드/DB 변경 없음, 프론트엔드만.
-
----
-
-_(T019 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을 기준으로 Plan 섹션을 작성한다.)_
-
-
-# T019 — me-created-date
+# T019 — /me 가입일을 YYYY-MM-DD(로컬 TZ) 포맷으로 표시
 
 ## Plan
-<planner 작성>
 
 ### Why
-<사용자 가치 또는 기술적 이유>
+회원 `/me` 페이지의 '가입일' 값이 현재 `toLocaleString('ko-KR')` 로 렌더되어
+날짜 + 시각 전체(예: `2024. 1. 15. 오후 3:30:12`)가 노출된다. 사용자는 가입일을
+간결한 `YYYY-MM-DD` 형태로만 보기를 원한다. 가독성·일관성 개선이 목적이며,
+백엔드가 이미 `createdAt`(ISO8601 문자열)을 내려주므로 프론트 표시 로직만 바꾸면 된다.
 
 ### What
-<결과물 기준 — 무엇을 바꾸는가>
+`/me` 페이지의 '가입일' 라벨에 대응하는 값을 `user.createdAt` 기준
+**`YYYY-MM-DD` (브라우저 로컬 타임존)** 포맷으로 표시한다.
+
+- 대상: '가입일' 행만. '최근 수정'(updatedAt) 행은 **범위 밖** — 기존 표시 유지.
+- 포맷 기준: 로컬 TZ의 연·월·일을 2자리 zero-pad 하여 `YYYY-MM-DD`.
+  - UTC 기준이 아니라 **브라우저 로컬 타임존** 기준 날짜를 사용한다
+    (예: ISO 가 `2024-01-15T23:30:00Z` 이고 로컬이 KST(+09:00)면 `2024-01-16`).
+- 잘못된/빈 `createdAt` 방어: 파싱 실패 시 원본 문자열 그대로 노출(기존 방어 로직 유지).
 
 ### Scope
-- 포함: ...
-- 제외: ...
+- 포함:
+  - `apps/web/app/me/page.tsx` — '가입일' 값 렌더에 사용할 `YYYY-MM-DD` 포맷 함수 적용.
+  - 날짜 포맷 유틸(신규 `formatDateYmd` 또는 기존 `formatDate` 와 분리된 함수) 추가.
+- 제외:
+  - 백엔드(`apps/api`) / DB / 마이그레이션 변경 **없음**.
+  - API 응답 계약(`lib/types.ts`) 변경 없음 — `createdAt` 은 이미 존재.
+  - '최근 수정'(updatedAt) 표시 포맷 변경 없음.
+  - 타임존 선택 UI, 국제화(i18n) 라이브러리 도입 등 추가 기능 없음(YAGNI).
 
 ### Acceptance
-- [ ] <측정 가능한 수용 기준>
-- [ ] ...
+- [ ] `/me` 페이지 로드 시 '가입일' 값이 정규식 `^\d{4}-\d{2}-\d{2}$` 에 매칭된다
+      (연 4자리 - 월 2자리 - 일 2자리, 시각 미표시).
+- [ ] 표시되는 날짜는 `createdAt` 을 **브라우저 로컬 타임존**으로 변환한 연/월/일과 일치한다
+      (UTC 자정 근처 경계 케이스에서 로컬 날짜로 넘어가는지 확인).
+- [ ] 월·일이 한 자리일 때 zero-pad 되어 2자리로 표시된다 (예: `2024-03-05`).
+- [ ] '최근 수정' 행은 기존(날짜+시각) 표시가 그대로 유지된다 — 회귀 없음.
+- [ ] `createdAt` 이 비정상 값일 때 페이지가 깨지지 않는다(원본 문자열 노출 등 방어 유지).
+- [ ] `apps/api` / DB 관련 파일에 변경 커밋이 없다(frontend-only 확인).
 
 ### Files touched (예상)
-- `apps/.../...`
+- `apps/web/app/me/page.tsx` — 가입일 렌더 포맷 교체 + `YYYY-MM-DD` 포맷 함수 추가.
 
----
-
-## Design
-<architect 작성>
-
-### 데이터 모델
-<엔티티/스키마 변경 — DDL 수준>
-
-### API 계약
-| Method | Path | Auth | 요청 DTO | 응답 | 상태 코드 |
-
-### 흐름
-- 1. ...
-- 2. ...
-
-### 보안 / 에러
-- 입력 검증 지점:
-- 권한 체크:
-- 에러 응답:
-
-### 마이그레이션 (DB 변경 있을 때)
-- 이름: `<timestamp>-<name>`
-- Up: ...
-- Down: ...
-
-### 테스트 포인트
-- QA가 확인할 지점 ...
-
----
-
-## Design (UX)
-<designer 작성 — required면>
-
-### Figma
-- URL: <figma-url>
-
-### 화면 목록
-- `<Route>` — states: default | loading | error | empty
-
-### 컴포넌트 트리
-```
-<PageName>
-  └─ <HeaderBar>
-  └─ <FormCard>
-```
-
-### Frontend 참고
-- 디자인 토큰 import 경로
-- 상태 분기 TODO 위치
-
----
-
-## Implementation (Backend)
-<backend 작성>
-
-### 변경 파일
-- `apps/api/.../...` — 설명
-
-### 새 환경변수
-- `VAR_NAME` — 용도
-
-### 마이그레이션
-- 파일명: ...
-
-### 로컬 재현
-```bash
-# 명령
-```
-
-### 수용 기준 자가 검증
-- [x] ...
-
----
-
-## Implementation (Frontend)
-<frontend 작성>
-
-### 추가 라우트/페이지
-- `/path` — 설명
-
-### 새 환경변수
-- `NEXT_PUBLIC_...`
-
-### 로컬 재현 (브라우저 시나리오)
-1. ...
-
-### 수용 기준 자가 검증
-- [x] ...
-
----
-
-## QA report
-<qa 작성>
-
-### 결과
-- 결정: pass | fail
-- 일자: 2026-10-27
-- 환경: WEB=:<port>/API=:<port>/DB=:<port>
-
-### 수용 기준 검증
-- [x] <기준> — pass
-- [ ] <기준> — fail → 아래 참조
-
-### 발견 사항
-- 없음 또는
-- **[FAIL]** <요약>
-  - 재현:
-    1. ...
-  - 기대: ...
-  - 실제: ...
-
----
-
-## Review notes
-<reviewer 작성>
-
-### 결과
-- 결정: pass | rework
-- 일자: 2026-10-27
-- 병합 SHA: <sha> (pass 시)
-
-### Blocker
-- 없음 또는
-- `file.ts:42` — <문제>, <수정 가이드>
-
-### Suggest
-- `file.ts:88` — <개선 아이디어>
-
-### 체크리스트 요약
-- PRD 정합성: ✅
-- 보안: ✅
-- 리소스/누수: ✅
-- 성능/데이터: ✅
-- 코드 품질: ✅
-- 테스트: ✅
-- 범위: ✅
+### 다음 역할 참고 (frontend)
+- 기존 `formatDate(iso)` 는 `toLocaleString('ko-KR')` 로 날짜+시각을 반환하므로
+  updatedAt 용으로 그대로 두고, 가입일 전용 `formatDateYmd(iso)` 를 신규 추가 권장.
+- 로컬 TZ `YYYY-MM-DD` 구현 예시(권장):
+  `const d = new Date(iso); const p=(n)=>String(n).padStart(2,'0');
+   return \`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}\`;`
+  (`getFullYear/getMonth/getDate` 는 로컬 TZ 기준이므로 toISOString().slice(0,10)
+   같은 UTC 기반 절단은 금지 — 경계 케이스에서 날짜가 틀어짐.)
+- 파싱 실패 방어: `Number.isNaN(d.getTime())` 이면 원본 `iso` 반환.
+- QA 는 로컬 TZ(KST) 기준으로 날짜 포맷·zero-pad·updatedAt 회귀만 확인하면 됨.
