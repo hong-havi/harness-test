@@ -24,7 +24,7 @@ preamble 에 아래 변수가 주입된다:
 
 1. **Run 과 bind** (bash tool):
 
-       orca orchestration run-use --run $RUN_ID --json
+       orca orchestration run-use --id $RUN_ID --json
 
    실패하면 중단하고 사용자에게 에러 알림.
 
@@ -74,7 +74,7 @@ worker 가 사용자에게 질문. 당신이 Slack 또는 터미널로 중계:
 
 세션이 crash 되고 재시작되면:
 1. preamble 에 같은 `RUN_ID`, `TASK_ID` 주입된다.
-2. `run-use --run $RUN_ID` 재 bind.
+2. `run-use --id $RUN_ID` 재 bind.
 3. handles 파일 마지막 라인에서 현재 활성 dispatch 확인.
 4. 메인 루프 재진입.
 

@@ -44,10 +44,9 @@ info "Coordinator claude 세션 launch (main repo 위에서 상주)..."
 LAUNCH="$(orca agent launch \
   --agent claude \
   --worktree "path:$MAIN_ORCA" \
-  --title "🎯 Coordinator T$TASK_ID" \
   --focus \
   --json 2>&1)"
-HANDLE="$(echo "$LAUNCH" | sed -nE 's/.*"handle":"([^"]+)".*/\1/p' | head -1)"
+HANDLE="$(echo "$LAUNCH" | sed -nE 's/.*"handle"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -1)"
 [[ -n "$HANDLE" ]] || die "Coordinator agent launch 실패: $LAUNCH"
 
 info "  handle=$HANDLE — TUI 로드 대기..."
@@ -79,7 +78,7 @@ PREAMBLE="$(cat <<EOF
 
 **1단계: Run bind**
 
-    orca orchestration run-use --run $RUN_ID --json
+    orca orchestration run-use --id $RUN_ID --json
 
 **2단계: 첫 worker spawn**
 

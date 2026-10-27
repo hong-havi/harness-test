@@ -11,7 +11,7 @@
 - `orca orchestration ask` 없이 응답 텍스트로 사용자에 질문 (전달 안 됨)
 
 ### Coordinator 는 **한다**
-- `orca orchestration run-use --run $RUN_ID` 로 Run 바인딩 획득
+- `orca orchestration run-use --id $RUN_ID` 로 Run 바인딩 획득
 - `orca orchestration check --wait` 로 메시지 수신
 - `scripts/coord-step.sh handle <msg>` 로 메시지별 처리 (worker-start / 역할 전환 / handles)
 - `question` 수신 → `ask` 로 사용자 중계 → `reply` 로 worker 에 답
@@ -36,7 +36,7 @@
 ### 2. Coordinator 세션 (자율 Auto-mode)
 
 preamble 지시대로:
-1. `orca orchestration run-use --run $RUN_ID` (bind)
+1. `orca orchestration run-use --id $RUN_ID` (bind)
 2. `./scripts/orca/worker-start.sh $TASK_ID planner "$WORKTREE" $AGENT $RUN_ID "$USER_REQUEST"`
 3. 메인 루프:
 
