@@ -4,17 +4,13 @@ title: me-profile-title
 slug: me-profile-title
 branch: task/T022-me-profile-title
 worktree: .worktrees/T022-me-profile-title
-status: planning          # planning | in-flight | paused | merged | dropped
+status: in-flight         # planning | in-flight | paused | merged | dropped
 required_roles:
   - { role: planner,    agent: kiro }
-  - { role: architect,  agent: kiro }
-  # - { role: designer,   agent: kiro, mcp: [figma] }
-  - { role: backend,    agent: kiro }
-  # - { role: frontend,   agent: kiro }
-  - { role: qa,         agent: kiro }
-  - { role: reviewer,   agent: kiro }
+  # no-op: 코드 변경 불필요 → architect/backend/qa/reviewer 생략 (coordinator 승인)
 current_role: planner
 role_history: []
+run_id: run_845f0cafc021
 ports:
   web: 3220
   api: 4220
@@ -22,7 +18,7 @@ ports:
 compose_project: harness_t022
 figma_url: null
 blocked_by: []
-related_prd: []
+related_prd: ["3.2 F-M4 정보 수정 / 5.1 GET /members/me"]
 priority: normal          # high | normal | low
 created_at: 2026-10-27
 updated_at: 2026-10-27
@@ -40,24 +36,34 @@ _(T022 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 # T022 — me-profile-title
 
 ## Plan
-<planner 작성>
+
+> **결론: NO-OP (already-applied).** 요구된 변경은 현재 코드에 이미 반영되어 있어 코드 변경이 불필요하다. 아래 조사 근거 참조.
 
 ### Why
-<사용자 가치 또는 기술적 이유>
+- User 요구: `/me` 페이지 상단 섹션 제목을 '프로필' → '내 정보' 로 문구 교체 (frontend-only, 백엔드/DB 무변경).
+- 목적: 화면 문구 일관성.
 
-### What
-<결과물 기준 — 무엇을 바꾸는가>
+### What (조사 결과)
+- `apps/web/app/me/page.tsx` 의 상단 섹션 제목 `<h1>` 이 **이미 `내 정보`** 로 표기됨.
+- `apps/web` 전체에서 `프로필` 문자열은 **0건** (grep 전수 조사).
+- 따라서 '프로필' → '내 정보' 변경은 **이미 적용된 상태**이며, 추가 코드 변경은 no-op.
+- git 이력상 `/me` 페이지는 T002(구현), T019(가입일 포맷)에서 수정됐고 현재 제목은 이미 '내 정보'.
 
 ### Scope
-- 포함: ...
-- 제외: ...
+- 포함: 조사 및 no-op 판정 기록 (본 task.md 문서화).
+- 제외: 모든 코드/스타일/로직 변경 (불필요). apps/web, apps/api 무변경.
 
 ### Acceptance
-- [ ] <측정 가능한 수용 기준>
-- [ ] ...
+- [x] `/me` 페이지 상단 섹션 제목이 '내 정보' 로 표시됨 — **이미 충족** (`apps/web/app/me/page.tsx`, `<h1>내 정보</h1>`).
+- [x] `apps/web` 내 '프로필' 문자열 부재 확인 — grep 0 matches.
+- [x] 코드 변경 없음 (no-op), 백엔드/DB 무변경.
 
-### Files touched (예상)
-- `apps/.../...`
+### Decision (coordinator 승인)
+- Coordinator 경유 user 결정: **no-op 로 완료 보고**. 코드 커밋 없이 planner 단계에서 task.md 에 사유 명시 후 종료.
+- 코드 커밋이 없으므로 frontend/qa/reviewer 단계 생략. task.md 문서 커밋 1건만 남기고 종료.
+
+### Files touched
+- `.harness/tasks/T022-me-profile-title.md` — no-op 판정 및 사유 기록 (코드 파일 무변경).
 
 ---
 
