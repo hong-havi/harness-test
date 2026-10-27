@@ -1,10 +1,10 @@
 ---
 id: T027
-title: signup-terms-check
+title: 회원가입 페이지 이용약관 동의 체크박스
 slug: signup-terms-check
 branch: task/T027-signup-terms-check
 worktree: .worktrees/T027-signup-terms-check
-status: planning          # planning | in-flight | paused | merged | dropped
+status: in-flight          # planning | in-flight | paused | merged | dropped
 required_roles:
   - { role: planner,    agent: kiro }
   - { role: architect,  agent: kiro }
@@ -13,7 +13,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: architect
+current_role: frontend
 role_history: []
 run_id: run_121330acb86b
 ports:
@@ -164,109 +164,59 @@ _(T027 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 
 ---
 
-## Design (UX)
-<designer 작성 — required면>
-
-### Figma
-- URL: <figma-url>
-
-### 화면 목록
-- `<Route>` — states: default | loading | error | empty
-
-### 컴포넌트 트리
-```
-<PageName>
-  └─ <HeaderBar>
-  └─ <FormCard>
-```
-
-### Frontend 참고
-- 디자인 토큰 import 경로
-- 상태 분기 TODO 위치
-
----
-
-## Implementation (Backend)
-<backend 작성>
-
-### 변경 파일
-- `apps/api/.../...` — 설명
-
-### 새 환경변수
-- `VAR_NAME` — 용도
-
-### 마이그레이션
-- 파일명: ...
-
-### 로컬 재현
-```bash
-# 명령
-```
-
-### 수용 기준 자가 검증
-- [x] ...
-
----
-
 ## Implementation (Frontend)
-<frontend 작성>
 
 ### 추가 라우트/페이지
-- `/path` — 설명
+- 신규 라우트 없음. 기존 `/signup` 페이지에 약관 동의 체크박스 추가.
+
+### 변경 파일
+- `apps/web/app/signup/page.tsx`
+  - `agreedToTerms` state 추가 (기본 `false`).
+  - 닉네임 필드와 제출 버튼 사이에 체크박스 필드 삽입 (`id=agreeTerms`).
+  - 제출 버튼 `disabled={submitting || !agreedToTerms}` 로 게이트.
+  - `onSubmit` 진입 시 `!agreedToTerms` 면 에러 세팅 후 early return (버튼 disabled 와 이중 방어).
+- `apps/web/app/globals.css`
+  - `.field--check`, `.checkbox`, `.checkbox input[type='checkbox']` 스타일 추가 (기존 디자인 토큰 사용).
 
 ### 새 환경변수
-- `NEXT_PUBLIC_...`
+- 없음.
+
+### 보안 자가 점검
+- 사용자 입력은 React 기본 escape. `dangerouslySetInnerHTML` 미사용.
+- 상태 변경 요청(POST /auth/signup)은 기존 `lib/api.ts` 가 `credentials: 'include'` + `X-CSRF-Token` 자동 처리(변경 없음).
+- 약관 동의는 프런트 consent 게이트 (서버 계약 변경 없음).
 
 ### 로컬 재현 (브라우저 시나리오)
-1. ...
+```bash
+docker compose up        # 현재 worktree 포트 (web=3270)
+```
+1. `http://localhost:3270/signup` 접속.
+2. 아이디/비밀번호/닉네임 입력 → "가입하기" 버튼이 **비활성화** 상태인지 확인(약관 미동의).
+3. "이용약관에 동의합니다 (필수)" 체크박스 체크 → 버튼이 **활성화**되는지 확인.
+4. 체크 해제 → 버튼 다시 비활성화 확인.
+5. 체크 후 정상 값으로 "가입하기" → 기존대로 `/login?signup=1` 이동.
+6. (이중 방어 확인) 체크박스를 끈 채로 Enter/제출 시도 시 "이용약관에 동의해야 가입할 수 있습니다." 에러 노출.
+
+정적 검증(의존성 설치 후):
+```bash
+pnpm --filter web typecheck   # 통과
+pnpm --filter web lint        # No ESLint warnings or errors
+pnpm --filter web build       # /signup 컴파일 성공
+```
 
 ### 수용 기준 자가 검증
-- [x] ...
+- [x] 약관 체크박스 표시 — `/signup` 빌드 성공, 코드상 확인.
+- [x] 미체크 시 버튼 비활성화 — `disabled={submitting || !agreedToTerms}`.
+- [x] 체크 시 활성화 + 기존 플로우 유지.
+- [x] 미동의 제출 차단 — `onSubmit` early return + 에러 메시지.
+- [x] typecheck / lint / build 통과.
 
 ---
 
 ## QA report
 <qa 작성>
 
-### 결과
-- 결정: pass | fail
-- 일자: 2026-10-27
-- 환경: WEB=:<port>/API=:<port>/DB=:<port>
-
-### 수용 기준 검증
-- [x] <기준> — pass
-- [ ] <기준> — fail → 아래 참조
-
-### 발견 사항
-- 없음 또는
-- **[FAIL]** <요약>
-  - 재현:
-    1. ...
-  - 기대: ...
-  - 실제: ...
-
 ---
 
 ## Review notes
 <reviewer 작성>
-
-### 결과
-- 결정: pass | rework
-- 일자: 2026-10-27
-- 병합 SHA: <sha> (pass 시)
-
-### Blocker
-- 없음 또는
-- `file.ts:42` — <문제>, <수정 가이드>
-
-### Suggest
-- `file.ts:88` — <개선 아이디어>
-
-### 체크리스트 요약
-- PRD 정합성: ✅
-- 보안: ✅
-- 리소스/누수: ✅
-- 성능/데이터: ✅
-- 코드 품질: ✅
-- 테스트: ✅
-- 범위: ✅

@@ -10,11 +10,17 @@ export default function SignupPage() {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState('');
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // 약관 미동의 시 제출 차단 (버튼 disabled 와 이중 방어).
+    if (!agreedToTerms) {
+      setError('이용약관에 동의해야 가입할 수 있습니다.');
+      return;
+    }
     setError(null);
     setSubmitting(true);
     try {
@@ -88,7 +94,27 @@ export default function SignupPage() {
             <span className="field__hint">2~32자</span>
           </div>
 
-          <button type="submit" className="btn" disabled={submitting}>
+          <div className="field field--check">
+            <label htmlFor="agreeTerms" className="checkbox">
+              <input
+                id="agreeTerms"
+                name="agreeTerms"
+                type="checkbox"
+                checked={agreedToTerms}
+                onChange={(e) => setAgreedToTerms(e.target.checked)}
+                disabled={submitting}
+              />
+              <span>
+                <strong>이용약관</strong>에 동의합니다. (필수)
+              </span>
+            </label>
+          </div>
+
+          <button
+            type="submit"
+            className="btn"
+            disabled={submitting || !agreedToTerms}
+          >
             {submitting ? '처리 중…' : '가입하기'}
           </button>
         </form>

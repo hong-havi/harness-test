@@ -120,6 +120,37 @@ h1 {
   color: var(--text-muted);
 }
 
+.field--check {
+  margin-bottom: 20px;
+}
+
+.checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.9rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.checkbox input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.checkbox input[type='checkbox']:disabled {
+  cursor: not-allowed;
+}
+
+.checkbox strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
