@@ -295,13 +295,21 @@ post_slack_question() {
   [[ "$kind" == "escalation" ]] && header="🚨 *긴급 — escalation*"
   local tid_hint=""
   [[ -n "$task_id" ]] && tid_hint=" — *$task_id*"
-  "$MAIN_REPO_ROOT/scripts/slack/send.sh" --text "$header$tid_hint
+  # task 의 Slack 스레드로 reply (chat.sh 가 저장한 thread_ts 재사용)
+  local thread_ts=""
+  [[ -n "$task_id" && -f "$CHAT_DIR/$task_id.slack" ]] && thread_ts="$(cat "$CHAT_DIR/$task_id.slack")"
+  local text="$header$tid_hint
 
 $body
 
 응답 방법:
-• \`@harness-bot ${task_id:-T###} <답>\` (예: \`@harness-bot ${task_id:-T###} merge\`)
-• 활성 task 1개면 \`@harness-bot <답>\` 으로 축약 가능" >/dev/null 2>&1 || true
+• 스레드 reply 로 직접 답 (예: \`merge\`, \`no\`, \`rework\`) — 자동 인식
+• 또는 \`@harness-bot ${task_id:-T###} <답>\`"
+  if [[ -n "$thread_ts" ]]; then
+    "$MAIN_REPO_ROOT/scripts/slack/send.sh" --text "$text" --thread "$thread_ts" >/dev/null 2>&1 || true
+  else
+    "$MAIN_REPO_ROOT/scripts/slack/send.sh" --text "$text" >/dev/null 2>&1 || true
+  fi
 }
 
 handle_question() {
@@ -311,7 +319,13 @@ handle_question() {
   body="$(extract_body "$msg")"
   sender="$(extract_payload_field "$msg" senderId)"
   task_id="$(task_id_for_sender "$sender")" || task_id=""
-  [[ -z "$body" ]] && body="(⚠️ 본문 추출 실패 — HARNESS_COORD_DEBUG=1 로 재시작 후 /tmp 덤프 확인)"
+  # body 가 비면 msg_json 통째를 raw dump 로 Slack 에 — 사용자가 raw 보고 응답 가능
+  if [[ -z "$body" ]]; then
+    body="(⚠️ 본문 추출 실패 — raw payload)
+\`\`\`
+$(echo "$msg" | head -c 1500)
+\`\`\`"
+  fi
   post_slack_question "$task_id" "$body" "$sender" question
   echo "ACTION: question T=${task_id:-?} sender=$sender body='${body:0:200}'"
 }
@@ -323,7 +337,12 @@ handle_escalation() {
   body="$(extract_body "$msg")"
   sender="$(extract_payload_field "$msg" senderId)"
   task_id="$(task_id_for_sender "$sender")" || task_id=""
-  [[ -z "$body" ]] && body="(⚠️ 본문 추출 실패)"
+  if [[ -z "$body" ]]; then
+    body="(⚠️ 본문 추출 실패 — raw)
+\`\`\`
+$(echo "$msg" | head -c 1500)
+\`\`\`"
+  fi
   post_slack_question "$task_id" "$body" "$sender" escalation
   echo "ACTION: escalation T=${task_id:-?} body='${body:0:200}'"
 }
