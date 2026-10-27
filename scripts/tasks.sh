@@ -383,10 +383,13 @@ cmd_new() {
 
   # Slack relay 데몬 자동 보장 — Orca 가 켜지고 첫 task 생성 시점에 start.
   # 이미 돌고 있으면 skip. .env 에 SLACK_* 설정 있을 때만.
+  # set -e 중단 방지: start 가 "이미 실행 중" exit 1 이어도 OK → || true.
   if [[ -n "${SLACK_BOT_TOKEN:-}" && -n "${SLACK_CHANNEL_ID:-}" ]]; then
-    if ! "$SCRIPT_DIR/slack/relay.sh" status 2>&1 | grep -q "^running"; then
+    if "$SCRIPT_DIR/slack/relay.sh" status 2>&1 | head -1 | grep -q "^running"; then
+      info "Slack relay 이미 실행 중 (skip)"
+    else
       info "Slack relay 데몬 시작..."
-      "$SCRIPT_DIR/slack/relay.sh" start 2>&1 | sed 's/^/  /' | tail -2
+      "$SCRIPT_DIR/slack/relay.sh" start 2>&1 | sed 's/^/  /' | tail -2 || true
     fi
   fi
 
