@@ -52,15 +52,18 @@ preamble 에 아래 변수가 주입된다:
 - task.md 에서 다음 required_role 찾음
 - outcome=succeeded + 다음 role 있음 → `current_role` 갱신 + chat `handoff` + `worker-start.sh` 로 다음 role spawn
 - outcome=succeeded + 다음 role 없음 → task 완료. 사용자 알림. 세션 종료 가능.
-- outcome=failed → 사용자에게 `orca orchestration ask` 로 rework 지시 요청
+- outcome=failed → `scripts/slack/send.sh` 로 Slack 에 "⚠️ T### <role> 실패: <summary>. rework 할 role? (예: `@bot T### rework backend`)" 포스트. 사용자 답을 relay 로 받아 `tasks.sh rework T### <role>` 호출
 
 ### question 처리
 
-worker 가 사용자에게 질문. 당신이 Slack 또는 터미널로 중계:
+worker 가 사용자에게 질문 → `coord-step.sh handle_question` 이 **자동으로 Slack 포스트** (task 의 chat 스레드 안). 당신은 추가 작업 불필요.
 
-    orca orchestration ask --body "worker 질문: <원문>"
+사용자가 Slack 스레드에 답 (예: "merge", "no", "rework") → `relay.sh` 가 받아 당신 세션에 `orca terminal send` 로 주입 → 당신이 그 응답을 worker 에 `reply` 로 전달:
 
-사용자 답이 세션에 자동 주입되면 `orca orchestration reply --to <sender> --body <답>` 으로 worker 에 전달.
+    orca orchestration reply --id <msg_id> --body "<사용자 응답>" --json
+
+- `msg_id` 는 question 메시지의 `message.id` 필드 (check 응답 json 참조).
+- Coordinator 자신은 `ask` 호출 금지 (Phase 4 G): "supervised Dispatch 필요" 에러. ask 는 worker 전용. 사용자에게 직접 질문해야 할 땐 `scripts/slack/send.sh --text "..." --thread "$(cat .harness/chat/<id>.slack)"` 로 Slack 포스트.
 
 ### escalation 처리
 

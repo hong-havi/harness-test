@@ -425,8 +425,21 @@ install_windows() {
   tr="\"$win_bash\" -lc \"cd '$MAIN_REPO_ROOT' && ./scripts/slack/relay.sh __daemon >> .harness/coord/relay.log 2>&1\""
 
   # schtasks 는 git-bash 에서 호출 시 `/` 가 Windows 경로로 변환되므로 `//` 사용.
-  schtasks //create //tn "harness-relay" //tr "$tr" //sc onlogon //rl limited //f >/dev/null \
-    || { echo "ERROR: schtasks 등록 실패" >&2; return 1; }
+  if ! schtasks //create //tn "harness-relay" //tr "$tr" //sc onlogon //rl limited //f >/dev/null 2>&1; then
+    cat >&2 <<HELP
+ERROR: schtasks 자동 등록 실패 (Windows UAC 또는 계정 정책 가능성).
+
+수동 등록 — PowerShell(관리자) 열고 아래 실행:
+
+  schtasks /create /tn "harness-relay" /tr '"$win_bash" -lc "cd \"$MAIN_REPO_ROOT\" && ./scripts/slack/relay.sh __daemon >> .harness/coord/relay.log 2>&1"' /sc onlogon /rl limited /f
+
+또는 nohup 모드 유지 (매번 수동 start):
+  ./scripts/slack/relay.sh start
+
+확인: schtasks /query /tn harness-relay
+HELP
+    return 1
+  fi
   info "✓ Task Scheduler 등록: harness-relay (로그온 시 자동 실행)"
   info "  확인: schtasks //query //tn harness-relay"
   info "  수동 실행: schtasks //run //tn harness-relay"

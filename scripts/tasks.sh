@@ -789,11 +789,12 @@ cmd_drop() {
   mv "$f" "$ARCHIVE_DIR/"
   info "  → archive 로 이동"
 
-  # chat log 도 archive
-  if [[ -f "$CHAT_DIR/${id}.jsonl" ]]; then
-    mv "$CHAT_DIR/${id}.jsonl" "$ARCHIVE_DIR/"
-  fi
-  rm -f "$CHAT_DIR/${id}.handles"
+  # chat log 도 archive — jsonl / slack(thread_ts) 보존, handles/processed/cursor 는 삭제
+  for suffix in jsonl slack role-history.jsonl; do
+    [[ -f "$CHAT_DIR/${id}.${suffix}" ]] && mv "$CHAT_DIR/${id}.${suffix}" "$ARCHIVE_DIR/"
+  done
+  rm -f "$CHAT_DIR/${id}.handles" "$CHAT_DIR/${id}.processed-dispatches"
+  rm -f "$MAIN_REPO_ROOT/.harness/coord/relay-thread-${id}.cursor"
 
   git add -A
   git -c core.hooksPath=/dev/null commit -m "${id} [harness]: drop task" >/dev/null || true
