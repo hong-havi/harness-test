@@ -12,7 +12,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: backend
+current_role: frontend
 role_history:
   - { role: architect, agent: kiro, at: 2026-10-27, note: "Design 섹션 작성, Q1/Q2 확정" }
 ports:
@@ -230,19 +230,54 @@ pnpm --filter api test          # jest → 4 suites / 37 tests 통과
 ---
 
 ## Implementation (Frontend)
-<frontend 작성>
+
+> frontend (kiro) — 2026-10-27. architect 의 API 계약(CSRF 요구 + `/login` 리다이렉트)과 backend 의 실제 응답 형태(`{ ok: true }` + 2개 만료 Set-Cookie)를 교차 검증. 로그아웃 UI/호출 로직은 기존 T002/T003 스캐폴드에 이미 구현되어 있었고, 본 계약과 **정확히 일치**함을 확인 — 신규/수정 코드 없이 계약 적합성 검증 + 자가 UAT 로 마무리 (YAGNI, 범위 밖 재작업 금지).
+
+### API 계약 교차 검증 (backend 실제 응답 ↔ architect 설계)
+- `lib/api.ts` `api.logout()` → `POST /auth/logout`. 공통 `request()` 헬퍼가 상태 변경 메소드(POST 포함)에 `X-CSRF-Token` 헤더(쿠키 `csrf_token` 값 복사) 자동 세팅 + `credentials: 'include'`. → architect 계약(JWT+CSRF) 및 backend 구현(`@UseGuards(JwtAuthGuard, CsrfGuard)`)과 일치. **불일치 없음.**
+- 성공 응답 `{ ok: true }` 는 `request<{ ok: boolean }>` 로 수신. 쿠키 만료는 서버 `Set-Cookie` 가 브라우저에서 처리(프런트 관여 불필요).
 
 ### 추가 라우트/페이지
-- `/path` — 설명
+- 신규 없음. 기존 자산 재사용:
+  - `app/components/Nav.tsx` — 로그인 상태(`authed`)에서만 "로그아웃" 버튼 노출, 비로그인(`anon`)에서는 로그인/회원가입 진입점 노출. `onLogout` → `api.logout()` → 클라이언트 상태 `anon` 전환 → `router.push('/login')` + `router.refresh()`.
+  - `app/logout/page.tsx` — `/logout` 직접 진입 시에도 로그아웃 → `/login` 교체 이동(`router.replace`) 처리.
+  - `lib/api.ts` — `logout()` 클라이언트 + CSRF 헤더/쿠키 전달 공통 로직.
 
 ### 새 환경변수
-- `NEXT_PUBLIC_...`
+- 없음. (기존 `API_PROXY_TARGET` same-origin rewrites 재사용 — `/api/*` → NestJS)
 
-### 로컬 재현 (브라우저 시나리오)
-1. ...
+### 보안 자가 점검
+- HttpOnly: `access_token` 은 JS 접근 불가(`readCsrfToken` 은 `csrf_token` 만 읽음). `document.cookie` 에 `access_token` 비노출.
+- CSRF: POST 로그아웃에 `X-CSRF-Token` 헤더 포함(Double Submit Cookie).
+- XSS: 사용자 입력 React 기본 escape, `dangerouslySetInnerHTML` 미사용.
+- 인증 UI 분기는 UX 편의일 뿐 보안 경계 아님(서버 Guard + middleware 가 실제 접근 제어). Nav 주석에 명시.
+- 토큰 `localStorage` 미저장, 신규 전역 상태 라이브러리 미도입.
 
-### 수용 기준 자가 검증
-- [x] ...
+### 정적 검증
+```bash
+pnpm --filter web typecheck   # tsc --noEmit → 통과
+pnpm --filter web lint        # next lint → No ESLint warnings or errors
+```
+
+### 로컬 재현 (브라우저 시나리오 — qa 핸드오프)
+1. `docker compose up` (현재 worktree 포트: WEB=:3210 / API=:4210 / DB=:3327).
+2. 브라우저 `http://localhost:3210/login` → 기존 계정으로 로그인 → `/me` 이동, 상단 Nav 에 "로그아웃" 버튼 노출 확인.
+3. "로그아웃" 클릭 → `POST /api/auth/logout` 200(`{ ok: true }`) → `/login` 으로 이동, Nav 가 로그인/회원가입 진입점으로 전환됨.
+4. DevTools → Application → Cookies: 로그아웃 후 `access_token`·`csrf_token` 쿠키 소멸 확인.
+5. DevTools Console 에서 `document.cookie` 에 `access_token` 이 없음을 확인(HttpOnly 검증).
+6. 로그아웃 후 `GET /api/members/me` 호출(또는 `/me` 재접근) → 401 → `/login` 리다이렉트 확인.
+7. 비로그인 상태로 `/logout` 직접 진입 → `POST /auth/logout` 401 이어도 클라이언트는 `/login` 으로 이동(멱등 UX).
+
+### 수용 기준 자가 검증 (frontend 범위)
+- [x] 로그인 상태에서 "로그아웃" 버튼 노출 / 비로그인 시 미노출 — `Nav.tsx` `authed`/`anon` 분기.
+- [x] 버튼 클릭 시 `POST /auth/logout` 호출 (same-origin `/api` rewrites + `credentials: 'include'`).
+- [x] 상태 변경 요청에 `X-CSRF-Token` 헤더 포함 — `request()` CSRF_METHODS(POST) 처리.
+- [x] 로그아웃 후 클라이언트 상태 초기화 + `/login` 이동, 로그인 진입점 노출.
+- [x] HttpOnly `access_token` JS 접근 불가 (프런트는 `csrf_token` 만 읽음).
+- [x] `dangerouslySetInnerHTML` 미사용 / `localStorage` 토큰 미저장 / 신규 전역 상태 라이브러리 미도입.
+- [x] 범위 밖 파일(`apps/api/**`, PRD) 변경 없음.
+- [x] 린트/타입체크 통과 (회귀 없음).
+- 비고(qa 범위): 쿠키 소멸·로그아웃 후 `GET /members/me` 401·`/login` 리다이렉트 등 런타임 UAT 는 위 §로컬 재현 시나리오로 qa 가 docker up 환경에서 확인.
 
 ---
 
