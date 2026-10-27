@@ -1,33 +1,26 @@
 # AGENTS.md — 프로젝트 지침
 
 ## 프로젝트
-- 간단한 게시판 (회원 + 게시판 모듈). 상세 스펙은 `PRD.md` 참조.
+- 간단한 게시판 (회원 + 게시판 모듈). 상세 스펙은 `PRD.md`.
 - 스택: Next.js (apps/web) + NestJS (apps/api) + MySQL, TypeORM, JWT(HttpOnly 쿠키), pnpm 모노레포, Docker Compose.
 
-## 하네스 진입 규칙 (중요)
+## 하네스 (Phase 4 L 기준)
 
-**어떤 작업이든 시작 전에 반드시 역할을 설정한다.**
+**이 리포는 Orca orchestration 기반 멀티-에이전트 하네스로 운영됩니다.** 자세한 운영 규칙·명령어·역할 지침은 다음 문서를 참조하세요:
 
-```bash
-./scripts/role.sh <planner|backend|frontend|reviewer|qa>
-```
+- `CLAUDE.md` — 역할 / Task 흐름 / 명령어 / Slack 명령 (가장 간결)
+- `.harness/WORKPLAN.md` — 전체 설계 + Phase 1~5 기록
+- `.harness/COORDINATOR.md` — Coordinator 운영 규칙 (Phase 4 B)
+- `.harness/roles/<role>.md` — 각 role 상세 지침
+- `./scripts/harness-status.sh` — 상태 1-shot
 
-- 역할 설정 없이 코드/문서를 수정하지 않는다.
-- 역할별 경계와 산출물은 `.harness/roles/<role>.md`에 정의.
-- 작업 보드는 `.harness/board.md`.
+## 핵심 원칙
 
-## 작업 인터럽트 규칙 (A → B)
-
-작업 A 중 B가 들어오면:
-
-1. B가 **핫픽스/긴급**이 아니면 → `board.md`의 **Inbox**에 추가, A 계속.
-2. 긴급이면 → 현재 태스크 파일에 **pause-note** 섹션 추가(`.harness/templates/pause-note.md` 참조) → A를 Paused로 이동 → B 착수.
-
-규칙은 `.harness/README.md`에 상세.
-
-## 공통 작업 원칙
-
-- `.planning/`, `.harness/tasks/`는 작업 상태 저장소. 작업 중 반드시 갱신.
-- 커밋은 작업 단위로 작게. 메시지에 태스크 ID(`T###`) 포함.
-- PRD.md에 반하는 설계 변경은 planner 역할에서만 반영.
-- 운영 시크릿·`.env`는 커밋 금지.
+- Task 시작은 `./scripts/tasks.sh new <slug> "요구사항"` 또는 Slack `@harness-bot new <slug> <요구사항>`
+- Coordinator (전용 claude agent) 가 자동으로 planner → ... → reviewer → merge 체인 수행
+- 사용자 개입은 reviewer 승인 시점 1회가 전부 (Slack 스레드에서 `merge` 응답)
+- 모든 상태는 파일 (`.harness/tasks/`, `.harness/chat/`, git 커밋)
+- 커밋 메시지 접두어: `T### [agent]:` (예: `T001 [kiro]: add signup endpoint`)
+- 역할 경계 지키기 — role.md 상단 참조
+- 범위 밖 리팩터·"개선" 금지 (YAGNI)
+- 운영 시크릿·`.env`·`.env.*` 커밋 금지

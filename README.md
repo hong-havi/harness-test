@@ -25,43 +25,42 @@ harness-test/
 ├── README.md                  이 문서
 ├── .gitignore
 │
-├── apps/                      (Phase 2 이후 생성 예정)
-│   ├── web/                   Next.js
-│   └── api/                   NestJS
+├── apps/                      Next.js(web) + NestJS(api) 모노레포
+│   ├── web/
+│   └── api/
 │
 ├── scripts/
-│   ├── tasks.sh               task 라이프사이클 (new/list/advance/merge/drop/spawn)
-│   ├── role.sh                역할 세션 진입점
-│   ├── chat.sh                task별 채팅 로그 (JSONL)
+│   ├── tasks.sh               task 라이프사이클 (new/list/show/merge/drop/rework/spawn)
+│   ├── role.sh                worker 세션 시작 시 컨텍스트 로드
+│   ├── chat.sh                task별 채팅 로그 (JSONL + Slack 미러)
+│   ├── coord-launch.sh        전용 Coordinator claude agent 세션 spawn
+│   ├── coord-step.sh          Coordinator 가 받은 메시지 1건 처리
+│   ├── coord-recover.sh       Coordinator crash 복구
+│   ├── harness-status.sh      전체 상태 1-shot
 │   ├── orca/
 │   │   ├── setup.sh             1회성 external-worktree-visibility 설정
-│   │   └── spawn.sh             task.md agent 매핑 → 어댑터 호출
-│   └── agents/
-│       ├── _bootstrap-prompt.sh  공통 역할 부트스트랩 프롬프트
-│       ├── claude.sh             orca agent launch --agent claude
-│       ├── codex.sh              orca agent launch --agent codex
-│       └── kiro.sh               kiro chat --new-window --mode agent
+│   │   └── worker-start.sh      worker spawn (네이티브/비네이티브 분기)
+│   ├── agents/
+│   │   └── _bootstrap-prompt.sh  worker preamble 재료
+│   └── slack/
+│       ├── relay.sh             Slack → Coordinator 중계 데몬 (polling)
+│       ├── relay-start.bat      Windows Task Scheduler wrapper
+│       ├── send.sh              chat.postMessage (chat.sh 미러링)
+│       ├── listen.sh            conversations.history polling
+│       └── thread-replies.sh    conversations.replies polling
 │
 ├── .harness/
-│   ├── WORKPLAN.md            전체 설계 + Phase 체크리스트
-│   ├── README.md              하네스 사용 가이드
+│   ├── WORKPLAN.md            설계 + Phase 1~5 기록
+│   ├── COORDINATOR.md         Phase 4 B Coordinator 운영 규칙
+│   ├── README.md              하네스 상세 (이 레포 상단은 요약)
+│   ├── AGENTS.md              에이전트별 특성
 │   ├── board.md               활성 task 집계
-│   ├── roles/                 8개 역할 지침
-│   │   ├── coordinator.md       user의 유일한 접점, dispatch
-│   │   ├── planner.md           task 명세 + required_roles 지정
-│   │   ├── architect.md         설계 (엔티티/API 계약)
-│   │   ├── designer.md          Figma MCP + apps/web 코드 뼈대
-│   │   ├── backend.md           apps/api 구현 (DB 포함)
-│   │   ├── frontend.md          apps/web 구현
-│   │   ├── qa.md                docker up + UAT
-│   │   └── reviewer.md          보안/누수/성능 리뷰 + rebase + ff-only merge
-│   ├── templates/
-│   │   ├── task.md                            task 파일 템플릿
-│   │   ├── pause-note.md                      긴급 인터럽트 핸드오프
-│   │   └── docker-compose.override.yml.tmpl   task별 포트 스코프
-│   ├── tasks/                 T###-<slug>.md (각 task 명세+이력)
-│   ├── chat/                  T###.jsonl (각 task 채팅, gitignore)
-│   └── archive/               폐기된 task 백업 (gitignore)
+│   ├── roles/                 role 지침 (worker 7 + coordinator)
+│   ├── templates/             task.md / pause-note / compose override
+│   ├── tasks/                 T###-<slug>.md
+│   ├── chat/                  T###.{jsonl, slack, handles, processed-dispatches, role-history.jsonl} (gitignore)
+│   ├── coord/                 relay.pid / relay.cursor / relay.log / bot_id.txt (gitignore)
+│   └── archive/               dropped/merged 백업 (gitignore)
 │
 └── .worktrees/                task별 worktree (gitignore)
     └── T###-<slug>/
@@ -70,30 +69,34 @@ harness-test/
         └── (apps/, pnpm 설치 등)
 ```
 
-## 하네스 — 핵심 흐름
+## 하네스 — 핵심 흐름 (Phase 4 B)
 
 ```
-User
- │  (Slack #harness-coord — Phase 3 예정)
- ▼
-Coordinator          user의 유일한 접점. dispatch, 리포팅.
- │
- ▼
-Per-task worktree    task마다 .worktrees/T###-<slug>/ (브랜치: task/T###-<slug>)
- │                   포트 스코프: WEB=3000+N*10, API=4000+N*10, DB=3306+N
- │
- ├─ planner       →  task.md 명세 + required_roles 선언
- ├─ architect     →  설계 (엔티티/API)
- ├─ designer      →  Figma + apps/web 뼈대 (필요 시)
- ├─ backend       →  apps/api 구현
- ├─ frontend      →  apps/web 구현 (필요 시)
- ├─ qa            →  docker up + UAT
- └─ reviewer      →  rebase + ff-only merge → main
+사용자: tasks.sh new <slug> "요구사항"  (또는 Slack @bot new ...)
+         │
+         ├─ worktree + 브랜치 + task.md 생성
+         ├─ orca orchestration run-create → run_id
+         └─ 전용 Coordinator claude agent 세션 spawn (coord-launch.sh)
+             │
+             Coordinator (Auto-mode) 가 자율 수행:
+             ├─ orca orchestration run-use → bind
+             ├─ orca/worker-start.sh → 첫 worker (planner) spawn
+             └─ loop: check --wait → coord-step.sh handle → 다음 worker-start
+                       │
+                       ├─ worker_done 받으면 다음 required_role spawn
+                       ├─ question 받으면 Slack 포스트 (reviewer 승인 등)
+                       └─ task-complete 받으면 메인 루프 종료
+
+chain: planner → [architect] → [designer] → [backend] → [frontend] → qa → reviewer → merge
+        (planner 가 required_roles 로 필요한 role 만 선언)
+
+사용자 개입: reviewer 승인 1회 — Slack 스레드에 "merge" (또는 Orca Coordinator 터미널 직접)
 ```
 
-- 각 역할은 **신규 세션**에서 실행 (컨텍스트 drift 방지)
-- 모든 상태는 **파일에 영속**: `.harness/tasks/T###.md`, `.harness/chat/T###.jsonl`, git 커밋
-- 역할-에이전트 매핑(claude/codex/kiro 등)은 task.md에 선언. Phase 2에서 자동 spawn (Orca).
+- 각 worker 는 **신규 agent 세션** 에서 실행 (컨텍스트 drift 방지)
+- 모든 상태는 **파일에 영속**: `.harness/tasks/T###.md`, `.harness/chat/T###.*`, git 커밋
+- 역할-에이전트 매핑(claude/codex/kiro)은 task.md 의 `required_roles` 에 선언
+- Coordinator = 전용 **claude agent 세션** (bash 데몬 아님). Orca Run bind 가 세션 단위라 필수.
 
 ## 다른 PC 로 배포 (1-step 셋업)
 
@@ -130,18 +133,46 @@ cp .env.example .env            # SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, HARNESS_DEF
 ### Task 라이프사이클
 
 ```bash
-./scripts/tasks.sh new <slug>              # worktree + 브랜치 + task.md 생성 + planner 자동 spawn
-./scripts/tasks.sh new <slug> --no-spawn   # agent spawn 없이 (Phase 1 수동 모드)
-./scripts/tasks.sh list                    # 활성 task 테이블
-./scripts/tasks.sh show [task-id]          # task 요약
-./scripts/tasks.sh advance [task-id]       # 다음 역할로 커서 이동 + 다음 agent spawn
-./scripts/tasks.sh advance [task-id] --no-spawn  # 커서만 이동
-./scripts/tasks.sh spawn [task-id] [role]  # 현재/지정 역할 agent 재 spawn (디버깅)
-./scripts/tasks.sh merge [task-id]         # rebase main + ff-only merge + cleanup
-./scripts/tasks.sh drop [task-id]          # 폐기 (archive 로)
+./scripts/tasks.sh new <slug> "요구사항"   # worktree + 브랜치 + task.md + Coordinator 자동 띄움
+./scripts/tasks.sh new <slug> --from <path>   # 긴 요구사항을 파일에서
+./scripts/tasks.sh new <slug> --agent claude  # agent override (기본: .env HARNESS_DEFAULT_AGENT)
+./scripts/tasks.sh list                       # 활성 task 테이블
+./scripts/tasks.sh show [task-id]             # task 요약
+./scripts/tasks.sh rework <id> <role>         # 지정 role 로 되돌림 + 재 spawn
+./scripts/tasks.sh spawn [id] [role]          # 디버깅: worker 수동 재 spawn
+./scripts/tasks.sh merge [id]                 # rebase + ff-only merge + cleanup (reviewer 호출)
+./scripts/tasks.sh drop [id] --yes            # 폐기 (archive)
 ```
 
 worktree 내부에서 실행하면 `task-id` 자동 감지.
+
+**❌ Phase 4 에서 제거된 명령**:
+- `tasks.sh advance` — Coordinator 가 worker_done 받으면 자동 전환하므로 불필요
+
+### 상태 조회 / 복구
+
+```bash
+./scripts/harness-status.sh                # 전체 1-shot (handles alive/dead + 최근 chat + processed-dispatches)
+./scripts/harness-status.sh --kill-orphans # handles 에 없는 harness 터미널 정리
+./scripts/coord-recover.sh <id>            # Coordinator crash 복구 (run_id/current_role 재진입)
+```
+
+### Slack (`@harness-bot`)
+
+```
+help / status / list                       # 조회
+new <slug> <요구사항...>                    # task 생성
+drop T### --yes                            # 폐기
+T### <명령>                                 # Coordinator 중계 (merge / no / rework / 자연어)
+                                           # 활성 task 1개면 T### 생략 가능. 스레드 reply 로도 OK.
+```
+
+### Slack relay 데몬
+
+```bash
+./scripts/slack/relay.sh start / stop / status
+./scripts/slack/relay.sh install           # (선택) OS 자동 시작 등록 — 보통 불필요, tasks.sh new 가 자동 start
+```
 
 ### 역할 세션
 
@@ -163,35 +194,31 @@ worktree 내부에서 실행하면 `task-id` 자동 감지.
 
 허용 `type`: `request` | `dispatch` | `question` | `answer` | `report` | `deliver` | `handoff` | `error` | `note`
 
-## 사용 흐름 예시
+## 사용 흐름 예시 (Phase 4 B — 자동 체인)
 
 ```bash
-# 1) 신규 task 생성 (main 에서)
-./scripts/tasks.sh new signup-api
+# 1) 신규 task 생성 (어디서든)
+./scripts/tasks.sh new signup-api "회원가입 API: POST /auth/signup, DTO 검증, 비밀번호 해시"
 #  → .worktrees/T001-signup-api/
-#  → task/T001-signup-api 브랜치
 #  → .harness/tasks/T001-signup-api.md
-#  → .env (WEB_PORT=3010, API_PORT=4010, DB_PORT=3307)
+#  → orca orchestration run-create
+#  → Orca UI 에 Coordinator claude 세션 뜸 (title: 🎯 Coordinator T001)
+#  → relay 데몬 자동 start (nohup, 아직 안 돌면)
+#  → Coordinator 가 자율 수행: run-use + planner(kiro) spawn + check-wait 루프
 
-# 2) worktree 로 이동 + planner 세션
-cd .worktrees/T001-signup-api
-../../scripts/role.sh planner
-#   → 역할 지침 + task.md + PRD 로드
-#   → planner 가 task.md 의 Plan 섹션 + required_roles 작성
-#   → 커밋
+# 2) 체인 자동 진행 — 사용자 개입 불필요
+# planner → architect → backend → qa → reviewer 가 Orca UI 에 순차적으로 뜸.
+# 각 worker 는 role 지침대로 작업 + 커밋 + chat deliver + worker_done 호출.
+# Coordinator 가 받고 다음 role spawn.
 
-# 3) 다음 역할로
-../../scripts/tasks.sh advance
-#  → current_role: planner → architect
+# 3) reviewer 승인 요청 — Slack 스레드에 "🔔 응답 필요" 자동 포스트
+# 사용자가 Slack T001 스레드에서 "merge" 응답 → relay 가 받아 Coordinator 중계
+# → reviewer kiro 가 tasks.sh merge 수행 → ff-only merge + archive.
+# → Coordinator 가 task-complete 받고 세션 자동 종료.
 
-../../scripts/role.sh architect
-#  → architect 세션 (fresh context, task.md 전체 참조)
-
-# 4) 각 역할 반복 ... → reviewer 가 최종 병합
-../../scripts/tasks.sh merge
-#  → git rebase main
-#  → git merge --ff-only
-#  → worktree + 브랜치 정리
+# 중간 상태 조회
+./scripts/harness-status.sh
+# 또는 Slack: @bot status
 ```
 
 ## 작업 인터럽트 (A → B)
