@@ -97,6 +97,7 @@ Coordinator 세션이 crash:
 - bash 백그라운드 데몬 (`scripts/coord.sh`) — 폐기됨. 쓰지 말 것.
 - `tasks.sh advance` — Phase 4 에서 제거됨. worker 가 `worker_done` 보내면 Coordinator 가 자동 전환.
 - 수동 `orca agent launch` 로 worker 띄우기 — `scripts/orca/worker-start.sh` 를 쓸 것 (Run 등록 포함).
+- **Coordinator 세션 안에서 Monitor tool / 백그라운드 polling 으로 `check` 호출 금지** — Orca 메시지 큐가 단일 소비자 모델이라 dual consumer 가 되면 worker-start 가 **메시지당 2-3회 중복 호출**됨. 메인 흐름의 blocking `check --wait` 하나만. (coord-step.sh 가 `.harness/chat/<task>.processed-dispatches` 로 idempotency 2차 방어하지만 1차는 preamble 지침 준수.)
 
 ---
 

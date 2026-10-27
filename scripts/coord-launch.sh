@@ -89,10 +89,11 @@ PREAMBLE="$(cat <<EOF
     msg_json=\$(orca orchestration check --wait \\
       --types worker_done,question,escalation,heartbeat \\
       --timeout-ms 60000 --json)
-    echo "\$msg_json" | ./scripts/coord-step.sh handle "\$msg_json"
+    ./scripts/coord-step.sh handle "\$msg_json"
 
 coord-step.sh 가 stdout 에 \`ACTION: ...\` 라인으로 다음에 할 일을 지시합니다:
 - \`ACTION: spawned T=... role=...\` → 그냥 다음 check 로 넘어가세요.
+- \`ACTION: duplicate-skipped ...\` → 이미 처리된 메시지. 그냥 다음 check.
 - \`ACTION: ask-user T=... msg='...'\` → \`orca orchestration ask --body "..."\` 로 사용자 결정 요청.
 - \`ACTION: question sender=... body='...'\` → ask 로 사용자 중계 후 \`orca orchestration reply --to <sender> --body "..."\` 로 응답.
 - \`ACTION: escalation ...\` → ask 로 사용자 긴급 알림.
@@ -100,6 +101,28 @@ coord-step.sh 가 stdout 에 \`ACTION: ...\` 라인으로 다음에 할 일을 �
 - \`ACTION: heartbeat\` 또는 응답 없음 → 그냥 다시 check.
 
 **이 루프를 모든 required_roles 완료까지 반복합니다.**
+
+## ⚠️ 매우 중요 — 단일 소비자 원칙 (중복 spawn 방지)
+
+Orca orchestration 메시지 큐는 **단일 소비자** 모델을 전제합니다. 두 흐름이 동시에 check 호출하면 메시지가 **양쪽 모두에 전달되거나 재배포되어** worker-start 가 중복 호출됩니다 (실제로 발생함: architect/frontend kiro 세션이 2-3개씩 뜸).
+
+**금지사항** (반드시 지킬 것):
+
+1. **Monitor tool 사용 금지** — Claude Code 의 Monitor 로 \`orca orchestration check\` 를 백그라운드 polling 하지 마세요. 메인 흐름에서 하나의 \`check --wait\` 호출만 사용.
+2. **\`run_in_background: true\` 로 check 호출 금지** — 메인 흐름 블록킹 호출만.
+3. **같은 Run 에 대해 동시에 두 번 check 호출 금지** — 하나 끝나면 다음 하나.
+4. **ack 는 매 check 호출에 포함** — \`check --ack <delivery_id>\` 로 즉시 ack 하거나, 다음 check 호출 시 \`--ack <prev_delivery_id>\` 로 처리. 지연 ack 하면 재배포됨.
+
+**올바른 메인 루프 패턴 1건만**:
+
+    while true:
+      msg_json=\$(orca orchestration check --wait \\
+        --types worker_done,question,escalation,heartbeat \\
+        --timeout-ms 60000 --json)
+      ./scripts/coord-step.sh handle "\$msg_json"
+      # (ack 는 check --wait 가 자동으로 수행하거나 다음 호출에서 --ack 포함)
+
+**중복 방지 가드도 코드에 있음**: coord-step.sh 가 dispatch_id 를 \`.harness/chat/<task>.processed-dispatches\` 에 기록해 같은 메시지가 재전달돼도 \`ACTION: duplicate-skipped\` 로 안전하게 skip. 하지만 **애초에 Monitor 를 안 띄우는 게 1차 방어선**.
 
 ## 전체 Coordinator 지침 (참고)
 

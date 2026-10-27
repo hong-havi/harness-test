@@ -85,6 +85,19 @@ worker 가 사용자에게 질문. 당신이 Slack 또는 터미널로 중계:
 - `orca orchestration ask` 없이 응답 텍스트로 사용자에게 질문하지 말기 (전달 안 됨).
 - Run bind 안 된 상태로 worker-start 호출 금지 (consumer_fenced).
 
+### ⚠️ 단일 소비자 원칙 (중복 spawn 방지)
+
+Orca orchestration 메시지 큐는 **단일 소비자** 모델. 두 흐름이 동시에 check 호출하면 **같은 worker_done 이 양쪽에 전달돼 worker-start 가 중복** 호출된다 (실측: architect 2개, frontend 3개 spawn).
+
+**절대 금지**:
+- Claude Code 의 **Monitor tool 로 orchestration check polling 금지**.
+- bash tool 의 **`run_in_background: true` 로 check 호출 금지**.
+- 메인 루프 밖에서 추가로 check 호출 금지 (ack 확인용 포함).
+
+**허용**: 메인 흐름 1개의 `check --wait` 블록킹 호출만. 끝나면 handle 처리 후 다시 check.
+
+coord-step.sh 가 dispatch_id idempotency 가드로 **2차 방어** 하지만 (`.harness/chat/<task>.processed-dispatches`), **Monitor 를 안 띄우는 게 1차 방어**.
+
 ## 요약
 
 1. `run-use` 로 bind

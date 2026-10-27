@@ -145,6 +145,21 @@ handle_worker_done() {
   }
   info "  task=$task_id"
 
+  # ─────────────────────────────────────────────────────────────
+  # Idempotency 가드 — 같은 dispatch_id 를 두 번 처리하지 않는다.
+  # Monitor dual-consumer 등으로 같은 worker_done 이 2회 이상 전달될 때,
+  # worker-start 가 중복 호출되는 걸 막는다.
+  # ─────────────────────────────────────────────────────────────
+  local processed_file="$CHAT_DIR/$task_id.processed-dispatches"
+  mkdir -p "$CHAT_DIR"
+  if [[ -f "$processed_file" ]] && grep -qxF "$dispatch_id" "$processed_file"; then
+    info "  ↩ dispatch $dispatch_id 이미 처리됨 → skip (중복 전달)"
+    echo "ACTION: duplicate-skipped T=$task_id dispatch=$dispatch_id"
+    return 0
+  fi
+  # 처리 시작 — dispatch_id 를 즉시 기록 (원자적 선점)
+  echo "$dispatch_id" >> "$processed_file"
+
   # handles 에서 해당 라인 찾아 handle + role 추출 + settled 마킹
   local handles_file="$CHAT_DIR/$task_id.handles"
   local line handle role agent
