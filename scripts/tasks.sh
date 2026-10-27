@@ -379,6 +379,15 @@ cmd_new() {
     return 0
   fi
 
+  # Slack relay 데몬 자동 보장 — Orca 가 켜지고 첫 task 생성 시점에 start.
+  # 이미 돌고 있으면 skip. .env 에 SLACK_* 설정 있을 때만.
+  if [[ -n "${SLACK_BOT_TOKEN:-}" && -n "${SLACK_CHANNEL_ID:-}" ]]; then
+    if ! "$SCRIPT_DIR/slack/relay.sh" status 2>&1 | grep -q "^running"; then
+      info "Slack relay 데몬 시작..."
+      "$SCRIPT_DIR/slack/relay.sh" start 2>&1 | sed 's/^/  /' | tail -2
+    fi
+  fi
+
   # Phase 4 (재설계): orca orchestration run-create → Coordinator claude 세션 launch.
   # Coordinator 세션이 run-use + 첫 worker spawn + check-wait 루프를 담당 (bash coord.sh 는 폐기).
   info "orchestration Run 생성..."

@@ -9,11 +9,13 @@
 #   5. 봇 멘션 토큰 (<@Uxxx>) 과 선행 "T###" 는 제거해서 자연스러운 명령만 주입.
 #
 # 사용:
-#   relay.sh start      # setsid+nohup 백그라운드 (임시/테스트)
+#   relay.sh start      # setsid+nohup 백그라운드 (일반 운영 — tasks.sh new 가 자동 호출)
 #   relay.sh stop       # PID 파일 기반 종료
 #   relay.sh status     # 돌고 있는지 확인
 #   relay.sh once       # 1 사이클만 (디버깅)
-#   relay.sh install    # OS 감지 → Task Scheduler / launchd / systemd 로 자동 시작 등록 (운영)
+#   relay.sh install    # (선택) OS 감지 → Task Scheduler / launchd / systemd 등록.
+#                       # 보통 불필요 — tasks.sh new 가 자동 start 하므로 Orca 운영 중엔 OK.
+#                       # Slack 상시 응답 받고 싶을 때만.
 #   relay.sh uninstall  # 자동 시작 등록 제거
 #
 # 상태 파일:

@@ -102,17 +102,20 @@ git clone <repo-url>
 cd harness-test
 cp .env.example .env            # SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, HARNESS_DEFAULT_AGENT 채움
 ./scripts/orca/setup.sh         # Orca external-worktree visibility (최초 1회)
-./scripts/slack/relay.sh install   # OS 자동 감지 → 서비스 등록 (로그온/부팅 시 자동 시작)
 ```
 
-`relay.sh install` 이 OS 별로:
-- **Windows** → Task Scheduler (`schtasks /sc onlogon`), git-bash 경로 자동 감지
-- **macOS** → `~/Library/LaunchAgents/com.harness.relay.plist` + `launchctl load`
-- **Linux** → `~/.config/systemd/user/harness-relay.service` + `systemctl --user enable --now`
+**Slack relay 데몬은 수동 등록 불필요** — `./scripts/tasks.sh new` 가 **자동 start** (이미 돌고 있으면 skip). Orca 꺼져있으면 Slack 응답 받아도 전달 불가하므로 상시 상주할 가치 없음. task 시작 시 보장되는 모델.
 
-**제거**: `./scripts/slack/relay.sh uninstall`
+**상시 자동 시작 원하면 (선택)**:
+```bash
+./scripts/slack/relay.sh install    # Windows=Task Scheduler, macOS=launchd, Linux=systemd user
+./scripts/slack/relay.sh uninstall  # 제거
+```
 
-**임시 실행 (등록 없이)**: `./scripts/slack/relay.sh start` (nohup 백그라운드)
+**수동 제어**:
+```bash
+./scripts/slack/relay.sh start / stop / status
+```
 
 ---
 
