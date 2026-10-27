@@ -2,6 +2,19 @@
 
 하네스 재구축 계획 문서. 중단되어도 이 문서만 읽으면 이어 짓도록 작성.
 
+## 현재 상태 (2026-10-27)
+
+**Phase 1 ~ Phase 5 모두 완료**. Phase 4 는 B 재설계 + C/D 확장으로 수렴됨.
+
+- **Phase 4 B (설계 전환)**: Coordinator = 전용 claude agent 세션. bash 데몬 폐기 (Orca Run bind 가 세션 단위라 bash 로 유지 불가).
+- **Phase 4 C**: Slack → Coordinator 중계 relay 데몬.
+- **Phase 4 D**: Slack 메타 명령 (`new / drop / status / help / list`).
+- **Phase 5**: 관측 (`harness-status.sh` 1-shot).
+
+바로 쓰고 싶으면 **§5 명령어 레퍼런스 (Phase 4 D 기준)** 부터.
+
+end-to-end 검증 완료: **T019 me-created-date** (planner → frontend → qa → reviewer → user 승인 → merge, 사람 개입 1회 "merge" 응답).
+
 ---
 
 ## 1. 결정된 설계 전제
@@ -226,7 +239,7 @@ tasks.sh 변경:
 3. **Coordinator 세션 수명**: Orca 자동 재시작 지원 여부 — 지금은 수동 유지 가정
 4. **kiro worker_done**: `tasks.sh advance` 가 `worker_done` 호출 시 `--outcome` 결정 로직 — kiro 작업 커밋 유무로 판정 vs 명시적 "pass/fail" 수동 입력
 
-### Phase 4 — Orca orchestration 전환 (현재 작업 중)
+### Phase 4 — Orca orchestration 전환 (2026-10-27 완료)
 
 **배경**: Phase 3 end-to-end 반복 테스트에서 **"shell wrapper 로 self-advance"** 패턴이 fundamentally fragile 함을 확인. agent 세션 (특히 kiro-cli) 이 `/quit` 하면서 내부 bash tool 호출(`tasks.sh advance → spawn.sh`)이 중단되어 자동 체인 반복 깨짐. 수십 번 수정으로도 해결 안됨.
 
@@ -345,25 +358,27 @@ agent 작업 흐름:
 - `scripts/tasks.sh drop` — git/orca cleanup 추가 (worker-abandon 호출)
 - `scripts/chat.sh` — Slack 미러 유지, orchestration send 와 병행
 
-#### 4.6 Phase 4 서브태스크 (TaskCreate 로 추적)
+#### 4.6 Phase 4 서브태스크 (완료 기록)
 
-| ID | 내용 | 상태 |
-|----|------|------|
-| 28 | T013 drop + cleanup | ✅ 완료 |
-| 29 | Phase 4 설계 (이 문서) | 진행 중 |
-| 30 | `.harness/COORDINATOR.md` 작성 | pending |
-| 31 | `coord.sh` 재작성 (check-wait 루프) | pending |
-| 32 | `tasks.sh new` orchestration 전환 | pending |
-| 33 | `bootstrap-prompt` 재작성 (worker_done) | pending |
-| 34 | role.md 8개 업데이트 | pending |
-| 35 | end-to-end 검증 + README 갱신 | pending |
+| 커밋 | 내용 |
+|------|------|
+| `e57edb9` | Phase 4 B 재설계 — Coordinator = 전용 claude agent 세션 (coord-launch.sh / coord-step.sh / coordinator.md / COORDINATOR.md) |
+| `c3d3096` | coord-launch 버그 fix (--title 제거, handle regex 공백 허용, run-use --id) |
+| `fd30057` | 중복 spawn 방지 — Monitor 금지 지침 + dispatch_id idempotency 가드 |
+| `184b9a4` | Phase 4 B 안정화 (task-complete 메인 루프 종료, coord-recover.sh) + Phase 5 (harness-status.sh) |
+| `ea26094` | Phase 4 C — Slack → Coordinator relay 데몬 (slack/relay.sh) |
+| `96f1d11` | Phase 4 C — Slack 메타 명령 status/help/list |
+| `dbc4725` | Phase 4 D — Slack new/drop 메타 명령 지원 |
 
-#### 4.7 사용자 결정 필요 (설계 마무리 전)
+#### 4.7 설계 결정 (완료)
 
-1. **Agent 기본값**: claude (안정) vs kiro (사용자 요청) — **추천: claude 기본, kiro experimental**
-2. **chat.sh 유지 여부**: orchestration send/check 와 병행 vs 완전 교체 — **추천: 병행 (Slack 미러 가치 유지)**
-3. **advance 명령**: deprecated wrapper (호환성) vs 완전 제거 — **추천: 완전 제거 (혼동 방지)**
-4. **Coordinator 세션 수명**: 세션당 1 Run 유지 vs 매 task 당 1 Run — **추천: task 당 1 Run** (재시작 쉬움)
+| 질문 | 결정 |
+|------|------|
+| Agent 기본값 | **kiro experimental** 선택 (claude 는 네이티브 지원, kiro 는 비네이티브 preamble 주입 경로 안정화) |
+| chat.sh 유지 | **병행** (orchestration send/check 와 공존, Slack 미러 가치 유지) |
+| advance 명령 | **완전 제거** (혼동 방지, stub 에러만 반환) |
+| Coordinator 세션 수명 | **task 당 1 Run / 1 Coordinator** (재시작 쉬움, Orca `run-use` bind 모델과 일치) |
+| Coordinator 주체 | **claude agent 세션** (bash 데몬 아님, Orca Run bind 는 세션 단위라 bash 로 유지 불가) |
 
 ---
 
@@ -423,43 +438,61 @@ relay 가 처리하는 메타 명령 범위 확장:
 
 ---
 
-## 5. 명령어 레퍼런스 (Phase 1 기준)
+## 5. 명령어 레퍼런스 (Phase 4 D 기준)
+
+### 터미널 (운영)
 
 ```bash
-# 신규 task
-./scripts/tasks.sh new <slug>
-# → .harness/tasks/T###-<slug>.md 생성 (template 복사)
-# → task/T###-<slug> 브랜치
-# → .worktrees/T###-<slug>/ (git worktree add)
-# → .env, docker-compose.override.yml 생성 (포트 스코프)
+# 신규 task — Coordinator claude 세션이 자동으로 뜨고 체인 수행
+./scripts/tasks.sh new <slug> "자연어 요구사항..."
+./scripts/tasks.sh new <slug> --from .harness/requests/<slug>.md    # 긴 요구사항
+./scripts/tasks.sh new <slug> --agent claude                        # agent 교체 (기본: .env HARNESS_DEFAULT_AGENT)
 
-# task 목록
-./scripts/tasks.sh list
-# T001  signup-api    backend       3010/4010/3307  in-progress
-# T002  post-list     planner       3020/4020/3308  planning
+# 조회
+./scripts/tasks.sh list                 # 활성 task 테이블
+./scripts/tasks.sh show [task-id]       # task.md 요약
+./scripts/harness-status.sh             # 전체 1-shot (handles alive/dead + processed-dispatches + 최근 chat)
+./scripts/harness-status.sh --kill-orphans   # handles 에 없는 harness 터미널 정리
 
-# 현재 역할 커서를 다음 required_roles로 이동
-./scripts/tasks.sh advance [task-id]     # worktree 내부면 task-id 자동 감지
+# 체인 중단
+./scripts/tasks.sh drop <task-id> --yes
 
-# 최종 병합 (reviewer가 호출)
-./scripts/tasks.sh merge [task-id]
-# → rebase main
-# → ff-only merge to main
-# → worktree + branch 정리
-
-# task 폐기 (실수로 만든 경우)
-./scripts/tasks.sh drop [task-id]
-# → 확인 후 worktree + branch 삭제, task.md는 archive로 이동
-
-# 역할 세션 진입
-./scripts/role.sh <role>                 # worktree 내부에서 실행 → task 자동 감지
-./scripts/role.sh <role> <task-id>       # 명시적
+# merge (reviewer 가 user 승인 받고 자동 호출. 수동으로도 가능)
+./scripts/tasks.sh merge <task-id>
 
 # chat log
-./scripts/chat.sh append <task-id> <from> <to> <type> <message>
-./scripts/chat.sh view <task-id>         # 사람이 읽기 좋게
-./scripts/chat.sh tail <task-id>         # tail -f
+./scripts/chat.sh view <task-id>        # 사람이 읽기 좋게
+./scripts/chat.sh tail <task-id>        # tail -f (Slack 안 보고 터미널에서 실시간)
+
+# Coordinator crash 복구
+./scripts/coord-recover.sh <task-id>    # task.md 에서 run_id/current_role 읽어 Coordinator 재시작
+
+# Slack relay 데몬 (한 번만 start, 재부팅 후 재start)
+./scripts/slack/relay.sh start
+./scripts/slack/relay.sh status
+./scripts/slack/relay.sh stop
+
+# ❌ 제거됨 (Phase 4)
+#   tasks.sh advance    — Coordinator 가 worker_done 받으면 자동 전환
+#   scripts/coord.sh    — bash 데몬. .harness/archive/legacy/ 로 이동
 ```
+
+### Slack (@harness-bot 멘션)
+
+```
+help                       # 사용법
+status                     # harness-status 결과
+list                       # 활성 task 테이블
+
+new <slug> <요구사항...>    # 터미널 tasks.sh new 와 동일 (relay 가 호출)
+drop T### --yes            # 실수 방지로 --yes 필수
+
+T### <명령>                # 그 task Coordinator 에 메시지 주입
+                           # (활성 task 1개면 T### 생략 가능)
+                           # 예: @bot T020 merge   /   @bot merge
+```
+
+사용자가 Coordinator 세션 (Orca UI 탭) 을 직접 열지 않고도 Slack 에서 전체 라이프사이클 조작 가능.
 
 ---
 
