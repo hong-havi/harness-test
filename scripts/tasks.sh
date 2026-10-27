@@ -379,28 +379,38 @@ cmd_new() {
     return 0
   fi
 
-  # Phase 4: orca orchestration run-create + 첫 worker-start (planner)
-  info "orchestration Run 생성 + planner worker 시작..."
+  # Phase 4 (재설계): orca orchestration run-create → Coordinator claude 세션 launch.
+  # Coordinator 세션이 run-use + 첫 worker spawn + check-wait 루프를 담당 (bash coord.sh 는 폐기).
+  info "orchestration Run 생성..."
   local run_json run_id
   run_json="$(orca orchestration run-create \
     --objective "Task $id ($slug): $description" \
     --json 2>&1)"
-  # run_e... 패턴 찾기 (orca 응답은 "id":"run_..." 형태)
   run_id="$(echo "$run_json" | grep -oE '"id":[[:space:]]*"run_[a-zA-Z0-9]+"' | head -1 | sed -E 's/.*"id":[[:space:]]*"([^"]+)".*/\1/')"
   [[ -n "$run_id" ]] || { info "⚠ run-create 실패:"; echo "$run_json" | tail -5; return 1; }
   info "  run_id=$run_id"
 
-  # run_id 를 task.md frontmatter 에 기록 — Coordinator 가 참조
-  sed -i.bak "s|^role_history: .*|role_history: []\\nrun_id: $run_id|" "$task_abs" 2>/dev/null \
-    || info "  (run_id 저장 생략 — task.md frontmatter 수동 추가 가능)"
-  rm -f "$task_abs.bak"
+  # run_id 를 task.md frontmatter 에 기록 — Coordinator 재개 시 참조
+  if grep -q "^role_history:" "$task_abs"; then
+    awk -v rid="$run_id" '
+      /^role_history:/ && !ins { print; print "run_id: " rid; ins=1; next }
+      { print }
+    ' "$task_abs" > "$task_abs.tmp" && mv "$task_abs.tmp" "$task_abs"
+  else
+    # frontmatter 끝 (두 번째 ---) 바로 앞에 삽입
+    awk -v rid="$run_id" '
+      /^---$/ { c++; if (c==2 && !ins) { print "run_id: " rid; ins=1 } }
+      { print }
+    ' "$task_abs" > "$task_abs.tmp" && mv "$task_abs.tmp" "$task_abs"
+  fi
 
-  # worker-start 로 planner spawn (preamble 자동 주입)
-  "$SCRIPT_DIR/orca/worker-start.sh" "$id" planner "$wt_abs" "$agent" "$run_id" "$description" || {
-    info "⚠ worker-start 실패. Coordinator 가 확인 필요."
+  info "Coordinator 세션 launch (전용 claude agent)..."
+  "$SCRIPT_DIR/coord-launch.sh" "$id" "$run_id" "$wt_abs" "$agent" planner "$description" || {
+    info "⚠ Coordinator launch 실패. 수동 복구 필요:"
+    info "  ./scripts/coord-launch.sh $id $run_id $wt_abs $agent planner \"$description\""
     return 1
   }
-  info "완료. Coordinator 가 체인 진행 중."
+  info "완료. Coordinator 세션이 체인 진행."
 }
 
 cmd_list() {

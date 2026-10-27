@@ -261,36 +261,42 @@ tasks.sh 변경:
 - `worker-start --terminal <handle>` 로 등록 (preamble 주입은 agent 가 chat 안에서 받음)
 - 안정성 떨어지므로 **experimental** 로 명시, **기본값은 claude**
 
-#### 4.3 Coordinator 흐름
+#### 4.3 Coordinator 흐름 (B 재설계 — 2026-10-27)
+
+**중요 재설계**: 초기 Phase 4 는 bash 데몬 `scripts/coord.sh` 가 Coordinator 역할을 담당하는 설계였으나, **end-to-end 테스트에서 치명적 공백**이 드러남 — Orca orchestration 의 `run-use` bind 는 **agent 세션(terminal) 단위**이고 bash 스크립트에서는 bind 유지 불가. 결과: `worker-start` 가 `consumer_fenced` 로 거부됨.
+
+**B 재설계**: Coordinator = **전용 claude agent 세션** (Auto-mode).
 
 ```
-# scripts/coord.sh — 재작성
-coord_init:
-  resolve_cli → bind Run (per-task) or coordinator Run
-  state_load (active_tasks 로부터 복원)
+tasks.sh new <slug>:
+  1. worktree + 브랜치 + task.md 생성
+  2. orca orchestration run-create → run_id (task.md frontmatter 에 기록)
+  3. scripts/coord-launch.sh 호출
+       ├─ orca agent launch --agent claude --worktree <main repo> --title "🎯 Coordinator T###"
+       ├─ TUI 로드 대기
+       └─ preamble 주입 (coordinator.md + 변수 TASK_ID/RUN_ID/WORKTREE/AGENT/FIRST_ROLE/USER_REQUEST)
+  4. 사용자 셸 즉시 리턴
 
-coord_main_loop:
-  while true:
-    msg = orca orchestration check \
-          --wait --types "worker_done,question,escalation" \
-          --timeout-ms 900000 --json
-    switch msg.type:
-      worker_done:
-        task = lookup_by_dispatch(msg.dispatch_id)
-        next_role = next_in_required_roles(task.current_role)
-        if next_role:
-          launch_worker(task, next_role)
-        else:
-          # 모든 역할 완료 — reviewer 가 user 승인 받고 merge 호출한 상태
-          mark_task_merged(task)
-      question:
-        slack_post(task.thread, msg.body + "답: 이 스레드 reply")
-        store_pending_question(task, msg.id)
-      escalation:
-        slack_post_urgent(task, msg)
-    orca orchestration ack --id <msg.delivery_id>
-    state_save
+Coordinator claude 세션 (preamble 지시대로):
+  1. orca orchestration run-use --run $RUN_ID       # Run bind 획득
+  2. ./scripts/orca/worker-start.sh $TASK_ID planner "$WORKTREE" $AGENT $RUN_ID "$USER_REQUEST"
+  3. loop:
+       msg = $(orca orchestration check --wait \
+                --types worker_done,question,escalation,heartbeat \
+                --timeout-ms 60000 --json)
+       ./scripts/coord-step.sh handle "$msg"    # ACTION: ... 지시 출력
+       # ACTION 별 처리:
+       #   spawned → 다시 check
+       #   ask-user / question / escalation → orca orchestration ask → 답을 reply 로 worker 전달
+       #   task-complete → 사용자 완료 리포트
 ```
+
+**bash 데몬 `scripts/coord.sh` 는 폐기** (`.harness/archive/legacy/` 로 이동).
+핵심 로직 분리:
+- `scripts/coord-launch.sh` — Coordinator claude 세션 띄움 + preamble 주입
+- `scripts/coord-step.sh handle <msg>` — 메시지 1건 처리 (handles 역매핑, 역할 전환, 다음 worker-start)
+- `.harness/roles/coordinator.md` — Coordinator agent 세션용 지침 (preamble 재료)
+- `.harness/COORDINATOR.md` — 운영 규칙
 
 #### 4.4 Worker (agent 세션) 흐름 (preamble 지시대로)
 
@@ -318,18 +324,20 @@ agent 작업 흐름:
 #### 4.5 신규 / 재작성 파일
 
 **신규**:
-- `.harness/COORDINATOR.md` — Coordinator 운영 규칙 (check 루프, 재시작 복구, pause-point, Slack ↔ Orchestration 매핑)
+- `.harness/COORDINATOR.md` — Coordinator 운영 규칙 (Phase 4 B)
+- `scripts/coord-launch.sh` — Coordinator claude 세션 spawn + preamble 주입
+- `scripts/coord-step.sh` — 메시지 1건 처리 로직
+- `.harness/roles/coordinator.md` — Coordinator agent 세션 preamble 재료
 
 **재작성 (완전 교체)**:
-- `scripts/coord.sh` — orchestration check-wait 루프
-- `scripts/tasks.sh new` — run-create + 첫 worker-start (planner)
+- `scripts/tasks.sh new` — run-create + coord-launch (Coordinator 세션 띄움)
 - `scripts/agents/_bootstrap-prompt.sh` — worker_done 패턴
-- `.harness/roles/*.md` 8개 — advance 지시 전부 → worker_done 지시로
+- `.harness/roles/*.md` 7개 (worker) — advance 지시 전부 → worker_done 지시로
 
 **제거/비활성화**:
-- `scripts/tasks.sh advance` — orchestration 이 대체 (호환 wrapper 로 당분간 유지하되 deprecated)
-- `scripts/orca/spawn.sh` — orchestration worker-start 가 대체
-- `scripts/agents/claude.sh` / `codex.sh` / `kiro.sh` — worker-start 가 통합 (얇은 wrapper 로 축소 가능)
+- `scripts/coord.sh` — bash 데몬 Coordinator. **`.harness/archive/legacy/coord.sh.phase3-bash-daemon` 로 이동**. 재사용 금지.
+- `scripts/tasks.sh advance` — orchestration 이 대체 (완전 제거 — stub 에러만)
+- `scripts/orca/spawn.sh` — orchestration worker-start 가 대체 (worker-start.sh 가 통합)
 
 **유지 + 리팩터**:
 - `scripts/tasks.sh merge` — reviewer 가 user 승인 받고 호출 (그대로)
