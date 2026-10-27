@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,  agent: kiro }
   - { role: qa,        agent: kiro }
   - { role: reviewer,  agent: kiro }
-current_role: planner
+current_role: frontend
 role_history: []
 ports:
   web: 3250
@@ -95,3 +95,59 @@ Coordinator 경유 사용자 확인 결과 (orchestration ask, 2026-10-27):
   (로그인/비로그인 Header 표시)로 수용 기준 검증. 가능하면 web 기동(포트 web:3250/api:4250/db:3331)
   후 브라우저 확인.
 - reviewer: 순수 리네임이므로 동작 보존 여부(로그아웃 플로우, 분기)와 잔여 `Nav` 참조 0 을 집중 확인.
+
+
+
+## Implementation (Frontend)
+
+### 변경 요약 (순수 리네임 리팩터 — 동작·마크업 보존)
+- `apps/web/app/components/Nav.tsx` → `apps/web/app/components/Header.tsx` (git mv, 히스토리 보존)
+  - `export default function Nav()` → `export default function Header()`
+  - 상단 주석 "상단 네비게이션" → "상단 Header" (세미컴포넌트 보안 경계 주석은 보존)
+  - className BEM 블록: `nav` / `nav__brand` / `nav__links` → `header` / `header__brand` / `header__links`
+  - 시맨틱 HTML5 `<nav>` 엘리먼트 태그는 유지 (접근성상 header 내 navigation 영역으로 올바름; 스펙상 `next/navigation` 과 함께 제외 대상)
+- `apps/web/app/layout.tsx`: `import Nav from './components/Nav'` → `import Header from './components/Header'`, `<Nav />` → `<Header />`
+- `apps/web/app/globals.css`: `.nav` / `.nav__brand` / `.nav__links` → `.header` / `.header__brand` / `.header__links` (선언 내용 불변, 컴포넌트 className 과 일치)
+- `apps/web/app/logout/page.tsx`: 주석 "주 로그아웃 경로는 Nav 의 로그아웃 버튼" → "Header 의 로그아웃 버튼"
+
+### 추가된 라우트/페이지
+- 없음 (신규 라우트 없음, 기존 컴포넌트 리네임만)
+
+### 새 환경변수
+- 없음
+
+### 수용 기준 자가 검증
+- [x] `components/Header.tsx` 존재, `export default function Header()` 보유. `Nav.tsx` 삭제됨 (git mv R 상태 확인).
+- [x] `layout.tsx` 가 `./components/Header` import + `<Header />` 렌더. `Nav` 참조 0.
+- [x] `apps/web` 전체에 `components/Nav` / `<Nav` / `function Nav(` / `import Nav` 참조 0건 (grep 확인). 유일한 `nav` 매치는 `<nav className="header">` 시맨틱 태그 (스펙상 제외).
+- [x] `globals.css` 에 `.nav*` 0건, `.header` / `.header__brand` / `.header__links` 로 대체됨. 컴포넌트 className 과 일치.
+- [x] `pnpm --filter web run build` 성공 — "Compiled successfully", 타입체크/린트 통과, 9/9 static pages 생성, 타입 에러 0.
+- [ ] (수동) 로그인 상태 Header 에 `{nickname}님` + 로그아웃 버튼 → 클릭 시 `POST /auth/logout` 후 `/login` 이동 — 로직 보존됨 (코드 diff 상 onLogout/api.logout 불변), 런타임 수동검증은 qa 담당.
+- [ ] (수동) 비로그인 상태 Header 에 "로그인" + "회원가입" 링크 — 로직 보존됨 (anon 분기 불변), 런타임 수동검증은 qa 담당.
+
+### 로컬 재현 명령 (qa 용 테스트 시나리오)
+사전: 이 worktree 에는 처음에 `node_modules` 가 없어 `pnpm install` 을 1회 수행함 (863 packages). qa 환경에 없으면 동일하게 `pnpm install` 선행.
+
+빌드 검증:
+```
+pnpm --filter web run build    # "Compiled successfully" + 타입/린트 통과 확인
+```
+
+런타임 수동 검증 (포트 web:3250 / api:4250 / db:3331):
+```
+docker compose up              # web+api+db 기동 (현재 worktree 포트)
+```
+1. 비로그인 케이스: 브라우저 `http://localhost:3250/` 접속 → 상단 Header 에 "로그인" / "회원가입" / "간편 가입" 링크 표시 확인.
+2. 로그인 케이스: `/login` 에서 로그인 → `/` 로 복귀 시 Header 에 `{nickname}님` / "내 정보" / "로그아웃" 버튼 표시 확인.
+3. 로그아웃 플로우: 로그아웃 버튼 클릭 → `POST /auth/logout` 네트워크 요청 발생 + `/login` 으로 이동 확인.
+4. HttpOnly 검증: DevTools Console 에서 `document.cookie` 에 `access_token` 이 노출되지 않음 확인.
+5. (스타일) Header 레이아웃이 기존 Nav 와 동일하게 렌더(상단 바, brand 좌측 / links 우측) — `.header*` 클래스 적용 확인.
+
+### 체크리스트
+- [x] 수용 기준 (빌드/정적) 전부 통과, 런타임 2케이스는 qa 핸드오프
+- [x] 린트/타입체크 통과 (next build 내 type check 통과)
+- [x] HttpOnly 쿠키 로직 불변 (`api.logout` 경로 보존)
+- [x] 상태 변경 요청(logout)에 기존 api 래퍼 사용 — CSRF/credentials 처리는 `@/lib/api` 에 위임 (리네임으로 변경 없음)
+- [x] `dangerouslySetInnerHTML` 미사용
+- [x] 범위 밖 파일 변경 없음 (apps/web + task.md 만)
+- [x] chat 에 `deliver` append (완료 시)

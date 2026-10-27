@@ -12,11 +12,11 @@ type AuthState =
   | { status: 'anon' };
 
 /**
- * 상단 네비게이션. 로그인 여부에 따라 링크를 분기한다.
+ * 상단 Header. 로그인 여부에 따라 링크를 분기한다.
  * 주의: 이 분기는 UX 편의일 뿐이며 보안 경계가 아니다.
  * 실제 접근 제어는 서버 Guard + middleware 가 담당한다.
  */
-export default function Nav() {
+export default function Header() {
   const router = useRouter();
   const [auth, setAuth] = useState<AuthState>({ status: 'loading' });
 
@@ -50,11 +50,11 @@ export default function Nav() {
   }, [router]);
 
   return (
-    <nav className="nav">
-      <Link href="/" className="nav__brand">
+    <nav className="header">
+      <Link href="/" className="header__brand">
         게시판
       </Link>
-      <div className="nav__links">
+      <div className="header__links">
         {auth.status === 'loading' && <span className="muted">…</span>}
 
         {auth.status === 'anon' && (

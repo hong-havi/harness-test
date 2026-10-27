@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 
 /**
  * /logout 로 직접 진입 시에도 동작하도록 하는 경로.
- * (주 로그아웃 경로는 Nav 의 로그아웃 버튼.)
+ * (주 로그아웃 경로는 Header 의 로그아웃 버튼.)
  */
 export default function LogoutPage() {
   const router = useRouter();
