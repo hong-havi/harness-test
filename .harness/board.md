@@ -14,7 +14,7 @@ _coordinator가 캡처한 아직 분해 전 요청. planner가 다음 사이클�
 
 | ID | Slug | Status | Current role | Ports (web/api/db) | Branch |
 |----|------|--------|--------------|---------------------|--------|
-| _(없음)_ | | | | | |
+| T025 | header-login | planning | planner | 3250/4250/3331 | task/T025-header-login |
 
 ## Paused
 
