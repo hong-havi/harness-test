@@ -231,9 +231,11 @@ cmd_new() {
   done
   [[ -n "$slug" ]] || die "slug 가 필요합니다. 예: $0 new signup-api [자연어 요구사항] 또는 --from <path>"
   [[ "$slug" =~ ^[a-z0-9-]+$ ]] || die "slug 는 kebab-case 소문자+숫자+하이픈만 허용"
-  # agent 유효성 — scripts/agents/<agent>.sh 어댑터 존재해야
-  [[ -x "$MAIN_REPO_ROOT/scripts/agents/${agent}.sh" ]] \
-    || die "지원하지 않는 agent: $agent. scripts/agents/ 에 어댑터 있어야 함 (claude/codex/kiro)"
+  # agent 유효성 — Phase 4 B 는 worker-start.sh 가 네이티브/비네이티브 분기 담당
+  case "$agent" in
+    claude|codex|cursor|antigravity|muse|zcode|opencode|opencode2|kiro) ;;
+    *) die "지원하지 않는 agent: $agent (지원: claude, codex, kiro, cursor, antigravity, muse, zcode, opencode, opencode2)" ;;
+  esac
 
   # description 결정: --from (명시) > 인라인 > .harness/requests/<slug>.md (자동 매칭)
   if [[ -n "$from_file" ]]; then
@@ -449,174 +451,34 @@ cmd_list() {
   fi
 }
 
-# required_roles 리스트에서 current_role 다음 역할 찾기
-# task.md 를 파싱 — "- { role: xxx, agent: yyy }" 패턴
-cmd_advance() {
-  local given_id=""
-  local no_spawn="${HARNESS_NO_SPAWN:-0}"
-  if [[ "$no_spawn" == "1" ]]; then
-    # 사람 interactive TTY 전용 — agent 세션(orca-spawned PTY, non-interactive shell)에서는 거부
-    if [[ ! -t 0 || "${ORCA_AGENT_SESSION:-}" == "1" ]]; then
-      die "HARNESS_NO_SPAWN=1 은 사람 interactive TTY 전용. agent 세션에선 금지됨. (자동 spawn 끄지 말고 그대로 체인 유지)"
-    fi
-    info "⚠ HARNESS_NO_SPAWN=1: 자동 spawn 생략 (디버깅 모드)"
-  fi
-  local outcome=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --no-spawn) die "--no-spawn 플래그는 제거됨. 디버깅용으로 자동 spawn 끄려면 'HARNESS_NO_SPAWN=1 ./scripts/tasks.sh ...' 로 환경변수 사용." ;;
-      --outcome)  outcome="$2"; shift 2 ;;
-      -*) die "Unknown flag: $1" ;;
-      *) given_id="$1"; shift ;;
-    esac
-  done
-  [[ -z "$outcome" || "$outcome" == "succeeded" || "$outcome" == "failed" ]] \
-    || die "--outcome 은 succeeded|failed 중 하나"
-  local id
-  id="$(resolve_task_id "$given_id")"
-  # advance 는 live(worktree) task.md 를 조작 — main 에서 호출돼도 올바르게 동작
-  local f
-  f="$(live_task_file "$id")"
-  if [[ "$f" == "$(task_file "$id")" ]]; then
-    die "worktree 의 live task.md 를 찾지 못함: $id. worktree 가 cleanup 됐거나 (merge/drop 후) 생성 전 상태일 수 있음."
-  fi
+# cmd_advance 는 Phase 4 에서 완전 제거됨. entry case 가 stub 에러만 반환.
+# 이 함수 자리에 있던 160+ 줄 로직은 archive 로 이동 (git history).
 
-  local current
-  current="$(get_fm "$f" "current_role")"
-  [[ -n "$current" ]] || die "current_role 을 읽지 못함: $f"
-
-  # 하이브리드 outcome 결정 (C 전략):
-  # - qa, reviewer: --outcome 플래그 강제 (품질 판정이라 명시 필요)
-  # - 그 외:        미지정이면 커밋 유무로 추론 (현재 역할 커밋이 1개 이상이면 succeeded)
-  if [[ "$current" == "qa" || "$current" == "reviewer" ]]; then
-    [[ -n "$outcome" ]] || die "역할 '$current' 는 --outcome succeeded|failed 명시 필요 (품질 결정)"
-  elif [[ -z "$outcome" ]]; then
-    local wt_abs="$WORKTREES_DIR/${id}-$(get_fm "$f" "slug")"
-    local commit_count=0
-    if [[ -d "$wt_abs" ]]; then
-      commit_count=$(cd "$wt_abs" && git log --oneline "main..HEAD" --author-date-order --grep="^${id} \[" --invert-grep -E 2>/dev/null | wc -l || echo 0)
-      # 폴백: grep 그냥 메시지 매치
-      commit_count=$(cd "$wt_abs" && git log "main..HEAD" --oneline 2>/dev/null | grep -c "^[a-f0-9]* ${id} \[.*\]:" | tr -d ' \n' || echo 0)
-    fi
-    if [[ "$commit_count" =~ ^[0-9]+$ && "$commit_count" -gt 0 ]]; then
-      outcome="succeeded"
-      info "outcome 추론: succeeded (role 커밋 ${commit_count}개 감지)"
-    else
-      outcome="failed"
-      info "outcome 추론: failed (role 커밋 없음)"
-    fi
-  fi
-
-  # required_roles 리스트에서 role 추출 (주석 라인은 스킵)
-  local roles
-  roles=$(awk '
-    /^required_roles:/ { in_block=1; next }
-    /^[a-zA-Z_]+:/ { in_block=0 }
-    in_block && /^[[:space:]]*#/ { next }
-    in_block && /role:/ {
-      sub(/.*role: */, "")
-      sub(/,.*/, "")
-      sub(/[}].*/, "")
-      gsub(/[[:space:]]/, "")
-      print
-    }
-  ' "$f")
-
-  [[ -n "$roles" ]] || die "required_roles 파싱 실패"
-
-  local next=""
-  local found=0
-  while IFS= read -r r; do
-    if [[ $found -eq 1 ]]; then
-      next="$r"
-      break
-    fi
-    [[ "$r" == "$current" ]] && found=1
-  done <<< "$roles"
-
-  if [[ -z "$next" ]]; then
-    info "'$current' 이후 역할 없음. 모든 required_roles 소진. status 를 수동 확인하세요."
-    return 0
-  fi
-
-  # outcome=failed 면 다음으로 넘기지 않고 현재 role 유지 (rework 로 돌아가야 함)
-  if [[ "$outcome" == "failed" ]]; then
-    info "$id: $current → outcome=failed. 커서 이동 안 함. 'rework' 로 이전 역할에 돌리거나 수정 후 재advance 하세요."
-    "$SCRIPT_DIR/chat.sh" append "$id" "$current" coordinator handoff "$current FAILED — 다음 역할로 넘기지 않음. rework 필요." >/dev/null
-    local hist_file="$CHAT_DIR/${id}.role-history.jsonl"
-    mkdir -p "$CHAT_DIR"
-    echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"$current\",\"outcome\":\"failed\",\"next\":null}" >> "$hist_file"
-    return 0
-  fi
-
-  # frontmatter 의 current_role 교체 (succeeded 또는 추론 성공일 때만)
-  sed -i.bak "s|^current_role: .*|current_role: $next|" "$f"
-  rm -f "${f}.bak"
-  info "$id: current_role $current → $next (outcome: ${outcome:-n/a})"
-
-  # role_history append (단순 JSONL 로 state.json 외부에 기록)
-  local hist_file="$CHAT_DIR/${id}.role-history.jsonl"
-  mkdir -p "$CHAT_DIR"
-  echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"$current\",\"outcome\":\"${outcome:-}\",\"next\":\"$next\"}" >> "$hist_file"
-
-  "$SCRIPT_DIR/chat.sh" append "$id" "$current" "$next" handoff "advance: $current → $next (outcome: ${outcome:-auto})" >/dev/null
-
-  if [[ $no_spawn -eq 1 ]]; then
-    info "(--no-spawn: 다음 agent 는 수동으로 spawn 하세요)"
-  else
-    # 이전 역할 터미널 자동 close (handles 파일에서 마지막 handle)
-    local handles_file="$CHAT_DIR/${id}.handles"
-    if [[ -f "$handles_file" ]]; then
-      local prev_handle
-      prev_handle=$(tail -1 "$handles_file" | awk -F'"handle":"' '{print $2}' | awk -F'"' '{print $1}')
-      if [[ -n "$prev_handle" ]]; then
-        info "이전 역할 ($current) 터미널 close: $prev_handle"
-        orca terminal close --terminal "$prev_handle" --json >/dev/null 2>&1 || true
-      fi
-    fi
-
-    # Spawn 을 **background 로 분리** 실행 — 호출한 agent 세션(kiro-cli 등)이
-    # 종료되어도 spawn.sh 가 끝까지 완주하도록 nohup + disown.
-    # 로그는 /tmp/spawn-<id>-<next>.log 에 보존 (디버깅용).
-    local spawn_log="/tmp/spawn-${id}-${next}.log"
-    rm -f "$spawn_log"
-    info "다음 agent 를 자동으로 spawn 합니다 (background, log=$spawn_log)..."
-    # setsid + nohup 조합: 세션 리더로 분리해 parent 종료 무관
-    (
-      if command -v setsid >/dev/null 2>&1; then
-        setsid nohup "$SCRIPT_DIR/orca/spawn.sh" "$id" "$next" > "$spawn_log" 2>&1 < /dev/null &
-      else
-        nohup "$SCRIPT_DIR/orca/spawn.sh" "$id" "$next" > "$spawn_log" 2>&1 < /dev/null &
-      fi
-      disown
-    ) || true
-    # background 로 던졌으므로 성공 여부는 즉시 확인 불가 — 로그로 사후 확인
-    local spawn_ok=1
-    info "  spawn 명령 발사 완료 (상태는 .harness/chat/${id}.handles 또는 Orca 터미널 목록에서 확인)"
-
-    if [[ $spawn_ok -eq 0 ]]; then
-      local err_msg
-      err_msg="⚠️ *${id}* : advance 는 성공했으나 **${next} agent spawn 2회 실패**. 수동 복구 필요:
-\`\`\`
-./scripts/tasks.sh spawn ${id} ${next}
-\`\`\`
-또는 Slack: \`@harness-bot spawn ${id} ${next}\` (지원 시) / 다른 agent 로 매핑 후 재시도."
-      info "$err_msg"
-      # chat log + Slack 알림
-      "$SCRIPT_DIR/chat.sh" append "$id" "harness" "coordinator" error "spawn 실패: ${next} agent 2회 재시도 실패 — 수동 복구 필요" >/dev/null 2>&1 || true
-      if [[ -n "${SLACK_BOT_TOKEN:-}" && -n "${SLACK_CHANNEL_ID:-}" ]]; then
-        "$SCRIPT_DIR/slack/send.sh" --text "$err_msg" >/dev/null 2>&1 || true
-      fi
-      return 1
-    fi
-  fi
-}
-
+# cmd_spawn — 디버깅용: 지정 role 의 worker 를 수동으로 재 spawn.
+# Phase 4 B: worker-start.sh 호출 (task.md 에서 run_id/agent/worktree 자동 추출).
 cmd_spawn() {
-  local id
+  local id role
   id="$(resolve_task_id "${1:-}")"
-  local role="${2:-}"
-  "$SCRIPT_DIR/orca/spawn.sh" "$id" "$role"
+  role="${2:-}"
+  local f; f="$(live_task_file "$id")"
+  [[ -z "$role" ]] && role="$(get_fm "$f" current_role)"
+  [[ -n "$role" ]] || die "role 을 지정하거나 task.md 에 current_role 이 있어야 함"
+  local slug run_id agent
+  slug="$(get_fm "$f" slug)"
+  run_id="$(get_fm "$f" run_id)"
+  [[ -n "$run_id" ]] || die "task.md 에 run_id 없음 — Phase 4 orchestration Run 필요"
+  # required_roles 에서 role 의 agent 매핑 추출
+  agent="$(awk -v r="$role" '
+    /^required_roles:/ { b=1; next }
+    /^[a-zA-Z_]+:/ { b=0 }
+    b && index($0, "role: " r) { if (match($0, /agent:[[:space:]]*[a-z0-9]+/)) { print substr($0, RSTART+6); exit } }
+  ' "$f" | sed -E 's/[[:space:]]+//g; s/,.*//; s/}.*//')"
+  [[ -n "$agent" ]] || agent="${HARNESS_DEFAULT_AGENT:-claude}"
+  local wt_abs="$WORKTREES_DIR/${id}-${slug}" wt_orca
+  wt_orca="$wt_abs"
+  command -v cygpath >/dev/null 2>&1 && wt_orca="$(cygpath -m "$wt_abs")"
+  info "worker-start: $id $role (agent=$agent, run=$run_id)"
+  "$SCRIPT_DIR/orca/worker-start.sh" "$id" "$role" "$wt_orca" "$agent" "$run_id" "(manual spawn)"
 }
 
 # rework: current_role 을 지정 역할로 되돌리고 그 agent 를 재 spawn.
@@ -675,8 +537,8 @@ cmd_rework() {
   if [[ $no_spawn -eq 1 ]]; then
     info "(--no-spawn: $to_role agent 는 수동으로 spawn 하세요)"
   else
-    info "$to_role agent 재 spawn..."
-    "$SCRIPT_DIR/orca/spawn.sh" "$id" "$to_role"
+    info "$to_role agent 재 spawn (worker-start)..."
+    cmd_spawn "$id" "$to_role"
   fi
 }
 
