@@ -147,11 +147,25 @@ ack 하지 않으면 **planner succeeded 가 영원히 재배포되어 architect
 
 \`sender_dispatch_id\` 는 ACTION: question 라인의 \`sender=\` 값. 또는 msg_json 의 \`senderId\` 필드.
 
-**사용자에게 질문해야 하는 경우 (worker 가 아니라 Coordinator 가)**: \`ask\` 대신 **slack/send.sh 직접 호출**:
+**사용자에게 질문해야 하는 경우 (worker 가 아니라 Coordinator 가)**: \`ask\` 대신 **반드시 task 스레드 안으로 Slack 포스트**:
 
-    "$MAIN_REPO_ROOT/scripts/slack/send.sh" --text "T### 질문: ..." --thread "$(cat .harness/chat/T###.slack)"
+    "$MAIN_REPO_ROOT/scripts/slack/send.sh" \\
+      --text "질문 내용 ..." \\
+      --thread "\$(cat $MAIN_REPO_ROOT/.harness/chat/$TASK_ID.slack)"
+
+❌ \`--thread\` 생략 **절대 금지**. 신규 메시지로 올라가 사용자가 어떤 task 의 질문인지 추적 못 함. 스레드 하나에 모든 bot 메시지 모여야 가독성 유지.
 
 그리고 사용자 응답 대기 — relay 가 받아 당신 세션에 주입.
+
+## ✅ task-complete 완료 알림 (Phase 4 O)
+
+\`ACTION: task-complete T=$TASK_ID\` 받으면 **반드시 Slack 스레드에 완료 포스트** 후 메인 루프 종료:
+
+    "$MAIN_REPO_ROOT/scripts/slack/send.sh" \\
+      --text "✅ *$TASK_ID* 완료 — merged. 모든 role 소진, Coordinator 종료." \\
+      --thread "\$(cat $MAIN_REPO_ROOT/.harness/chat/$TASK_ID.slack)"
+
+사용자가 Slack 에서 task 완료 신호를 받아야 추후 조치 (follow-up task, 운영 공유) 가능.
 
 ## ⚠️ 매우 중요 — 단일 소비자 원칙 (중복 spawn 방지)
 

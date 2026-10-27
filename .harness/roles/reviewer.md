@@ -78,7 +78,13 @@
         ```
      4. **대기**. 사용자 답이 터미널에 자동 주입됨.
      5. 사용자 답에 따라:
-        - **merge / yes / 배포 / ok** → `./scripts/tasks.sh merge <task-id>` 호출 (rebase + ff-only + cleanup) → `orca orchestration send --type worker_done --outcome succeeded --summary "merged"`
+        - **merge / yes / 배포 / ok** → `./scripts/tasks.sh merge <task-id>` 호출 (rebase + ff-only + cleanup) → **merge 완료 Slack 스레드 알림**:
+
+            ./scripts/slack/send.sh \
+              --text "🎉 *<task-id>* merged → main (SHA: <sha>). 체인 완료." \
+              --thread "$(cat .harness/chat/<task-id>.slack)"
+
+          → `orca orchestration send --type worker_done --outcome succeeded --summary "merged <sha>"`
         - **no / 수정 / rework** → `orca orchestration send --type worker_done --outcome failed --summary "user rejected: ..."` → Coordinator 가 user 결정 중계
         - 애매하면 다시 question 으로 재질의
    - **Blocker 있음** → chat `handoff` + `./scripts/tasks.sh rework <task-id> <원담당역할>` 호출. 사용자 승인 없이 바로 rework (품질 결정).

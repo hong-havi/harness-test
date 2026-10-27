@@ -255,6 +255,16 @@ handle_worker_done() {
     info "  모든 required_roles 소진. task 완료."
     "$SCRIPT_DIR/chat.sh" append "$task_id" "$role" coordinator deliver "task $task_id 완료 (최종 role: $role)" >/dev/null 2>&1 || true
 
+    # Phase 4 O: Slack 스레드에 명시적 완료 알림 포스트.
+    # chat.sh deliver 가 자동 미러하지만, "✅ merged" 명확 메시지로 사용자 추적 쉽게.
+    if [[ -n "${SLACK_BOT_TOKEN:-}" && -n "${SLACK_CHANNEL_ID:-}" && -f "$CHAT_DIR/$task_id.slack" ]]; then
+      local merge_sha
+      merge_sha="$(cd "$MAIN_REPO_ROOT" && git log --oneline -1 --grep="^${task_id} " 2>/dev/null | awk '{print $1}')"
+      "$MAIN_REPO_ROOT/scripts/slack/send.sh" \
+        --text "✅ *${task_id}* 완료 — merged${merge_sha:+ ($merge_sha)}. 모든 role 소진, Coordinator 종료." \
+        --thread "$(cat "$CHAT_DIR/$task_id.slack")" >/dev/null 2>&1 || true
+    fi
+
     # Phase 4 O: task 완료 자동 cleanup — task.md 가 archive 안 돼서 수동 cleanup 반복 결함.
     # reviewer 가 tasks.sh merge 호출했으면 main 쪽 task.md 가 archive 로 가야 함. 이중 체크:
     local main_task_md
