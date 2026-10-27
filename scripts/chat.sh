@@ -36,9 +36,10 @@ usage() {
 Usage:
   $0 append <task-id> <from> <to> <type> <message...>
   $0 append <task-id> <from> <to> <type> --from <file>    # 긴 메시지(argv quoting 이슈 회피)
-  $0 view   <task-id>
-  $0 tail   <task-id>
-  $0 raw    <task-id>
+  $0 view       <task-id>
+  $0 tail       <task-id>
+  $0 raw        <task-id>
+  $0 send-coord <task-id> <message...>    # task 의 Coordinator 세션에 메시지 주입 (수동 응답 등)
 
 Valid types: ${VALID_TYPES[*]}
 EOF
@@ -244,13 +245,34 @@ cmd_raw() {
   [[ -f "$f" ]] && cat "$f" || echo "(no chat log for $id)"
 }
 
+# cmd_send_coord — task 의 Coordinator 세션에 메시지 주입 (수동 복구 / 응답 전달용)
+# 사용: chat.sh send-coord <task-id> <message...>
+# handles 파일에서 coordinator handle 찾아 orca terminal send 호출.
+cmd_send_coord() {
+  local id="${1:-}"
+  shift || true
+  local msg="$*"
+  [[ -n "$id" && -n "$msg" ]] || { echo "Usage: chat.sh send-coord <task-id> <message...>" >&2; exit 1; }
+  local hf="$CHAT_DIR/${id}.handles"
+  [[ -f "$hf" ]] || { echo "ERROR: handles 파일 없음: $hf" >&2; exit 1; }
+  local handle
+  handle="$(grep '"role":"coordinator"' "$hf" | tail -1 \
+    | sed -nE 's/.*"handle"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
+  [[ -n "$handle" ]] || { echo "ERROR: coordinator handle 없음 (handles 에 coordinator 라인 없음)" >&2; exit 1; }
+  echo "→ send to $id Coordinator (handle=${handle:0:20}…): '${msg:0:120}'"
+  orca terminal send --terminal "$handle" --text "$msg" --enter --wait-submit 10 --json >/dev/null 2>&1 \
+    && echo "✓ 전달 완료" \
+    || { echo "⚠ 전달 실패 (handle 죽었을 수 있음 — coord-recover.sh $id 로 재시작)"; exit 1; }
+}
+
 cmd="${1:-}"
 shift || true
 case "$cmd" in
-  append) cmd_append "$@" ;;
-  view)   cmd_view "$@" ;;
-  tail)   cmd_tail "$@" ;;
-  raw)    cmd_raw "$@" ;;
+  append)     cmd_append "$@" ;;
+  view)       cmd_view "$@" ;;
+  tail)       cmd_tail "$@" ;;
+  raw)        cmd_raw "$@" ;;
+  send-coord) cmd_send_coord "$@" ;;
   ""|-h|--help|help) usage ;;
   *) usage; exit 1 ;;
 esac

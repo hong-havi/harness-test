@@ -129,6 +129,7 @@ handle_meta_command() {
    예: \`@bot new me-logout 회원 /me 페이지에 로그아웃 버튼\`
    긴 요구사항은 \`.harness/requests/<slug>.md\` 로 저장 후 \`new <slug>\` 만.
 • \`drop T### --yes\` — task 폐기 (\`--yes\` 명시 필수)
+• \`rework T### <role>\` — 지정 role 로 되돌림 (예: QA fail 후 \`rework T020 backend\`)
 
 *Coordinator 중계*
 • \`T### <명령>\` — 그 task Coordinator 에 메시지 주입 (예: \`T020 merge\`)
@@ -167,7 +168,18 @@ slug 은 kebab-case 소문자+숫자+하이픈만 허용. 예:
       local tail_lines
       tail_lines="$(echo "$out" | tail -15)"
       if [[ -n "$tid" ]] && echo "$out" | grep -q "Coordinator 세션 띄움"; then
-        post_slack "✅ *$tid* ($slug) 생성 + Coordinator 세션 뜸. 체인 진행 중.
+        # handles 파일에서 coordinator handle 추출 → Orca UI 에서 찾기 쉽게
+        local coord_handle=""
+        if [[ -f "$CHAT_DIR/$tid.handles" ]]; then
+          coord_handle="$(grep '"role":"coordinator"' "$CHAT_DIR/$tid.handles" | tail -1 \
+            | sed -nE 's/.*"handle"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
+        fi
+        local handle_line=""
+        [[ -n "$coord_handle" ]] && handle_line="
+Coordinator 세션: \`$coord_handle\` (Orca UI 에서 해당 터미널 탭 열기)"
+        post_slack "✅ *$tid* ($slug) 생성 + Coordinator 세션 뜸. 체인 진행 중.$handle_line
+
+이후 \`@bot status\` 로 진행 조회, reviewer 승인 시 Slack 스레드에 \`merge\` 응답.
 \`\`\`
 $tail_lines
 \`\`\`" "$thread_ts"
@@ -197,6 +209,25 @@ $tail_lines
       post_slack "🗑 *$tid* drop 완료.
 \`\`\`
 $(echo "$out" | tail -8)
+\`\`\`" "$thread_ts"
+      return 0 ;;
+    rework)
+      # 형식: rework T### <role>
+      local tid role
+      tid="$(echo "$body" | grep -oE '\bT[0-9]{3}\b' | head -1)"
+      # body 에서 T### 와 "rework" 토큰 제거 후 남은 첫 토큰이 role
+      role="$(echo "$body" | sed -E 's/\brework\b//Ig; s/\bT[0-9]{3}\b//g' | awk '{print $1}')"
+      log "META: rework tid=$tid role=$role"
+      if [[ -z "$tid" || -z "$role" ]]; then
+        post_slack "⚠️ \`rework\` 사용법: \`@bot rework T### <role>\` (예: \`@bot rework T020 backend\`)
+role 은 planner/architect/designer/backend/frontend/qa/reviewer 중 하나." "$thread_ts"
+        return 0
+      fi
+      local out
+      out="$("$MAIN_REPO_ROOT/scripts/tasks.sh" rework "$tid" "$role" 2>&1)"
+      post_slack "🔁 *$tid* rework → *$role*
+\`\`\`
+$(echo "$out" | tail -10)
 \`\`\`" "$thread_ts"
       return 0 ;;
   esac
