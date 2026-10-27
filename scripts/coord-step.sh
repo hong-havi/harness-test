@@ -50,10 +50,37 @@ extract_delivery_id() {
 }
 
 # payload JSON 문자열 안에서 key 추출 (escaped quotes)
+# payload 는 2단계 escape — "payload": "{\"key\":\"val\"}" 형태.
+# 다중 fallback 로 다른 키명 시도 가능 (extract_body 가 호출).
 extract_payload_field() {
   local msg="$1" key="$2"
   echo "$msg" | grep -oE "\\\\\"$key\\\\\":[[:space:]]*\\\\\"[^\\\\]+\\\\\"" | head -1 \
     | sed -E 's/.*\\"([^\\]+)\\".*/\1/'
+}
+
+# question/escalation 메시지의 "본문" 추출 — payload 키명이 orchestration
+# 버전/명령에 따라 다를 수 있어 다중 fallback:
+#   body, question, text, message, content
+# 모두 실패하면 payload 통째 반환 (최소한 사용자가 뭔가 볼 수 있도록).
+extract_body() {
+  local msg="$1" v
+  for k in body question text message content prompt; do
+    v="$(extract_payload_field "$msg" "$k")"
+    if [[ -n "$v" ]]; then echo "$v"; return 0; fi
+  done
+  # 최후: payload 전체 (escaped string). 디버그용.
+  echo "$msg" | grep -oE '"payload"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 \
+    | sed -E 's/.*"payload"[[:space:]]*:[[:space:]]*"(.+)"/\1/' | sed 's/\\n/\n/g; s/\\"/"/g' \
+    | head -c 500
+}
+
+# 디버그 — 메시지 전체 JSON 을 /tmp 에 덤프 (--debug 환경변수)
+dump_debug() {
+  [[ -z "${HARNESS_COORD_DEBUG:-}" ]] && return 0
+  local msg="$1" tag="${2:-msg}"
+  local f="/tmp/coord-step-${tag}-$(date +%s%N).json"
+  echo "$msg" > "$f"
+  echo "DEBUG: dumped to $f" >&2
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -279,22 +306,26 @@ $body
 
 handle_question() {
   local msg="$1"
+  dump_debug "$msg" question
   local body sender task_id
-  body="$(extract_payload_field "$msg" body)"
+  body="$(extract_body "$msg")"
   sender="$(extract_payload_field "$msg" senderId)"
   task_id="$(task_id_for_sender "$sender")" || task_id=""
+  [[ -z "$body" ]] && body="(⚠️ 본문 추출 실패 — HARNESS_COORD_DEBUG=1 로 재시작 후 /tmp 덤프 확인)"
   post_slack_question "$task_id" "$body" "$sender" question
-  echo "ACTION: question T=${task_id:-?} sender=$sender body='$body'"
+  echo "ACTION: question T=${task_id:-?} sender=$sender body='${body:0:200}'"
 }
 
 handle_escalation() {
   local msg="$1"
+  dump_debug "$msg" escalation
   local body sender task_id
-  body="$(extract_payload_field "$msg" body)"
+  body="$(extract_body "$msg")"
   sender="$(extract_payload_field "$msg" senderId)"
   task_id="$(task_id_for_sender "$sender")" || task_id=""
+  [[ -z "$body" ]] && body="(⚠️ 본문 추출 실패)"
   post_slack_question "$task_id" "$body" "$sender" escalation
-  echo "ACTION: escalation T=${task_id:-?} body='$body'"
+  echo "ACTION: escalation T=${task_id:-?} body='${body:0:200}'"
 }
 
 # ─────────────────────────────────────────────────────────────

@@ -94,7 +94,7 @@ PREAMBLE="$(cat <<EOF
 coord-step.sh 가 stdout 에 \`ACTION: ...\` 라인으로 다음에 할 일을 지시합니다:
 - \`ACTION: spawned T=... role=...\` → 그냥 다음 check 로 넘어가세요.
 - \`ACTION: duplicate-skipped ...\` → 이미 처리된 메시지. 그냥 다음 check.
-- \`ACTION: ask-user T=... msg='...'\` → \`orca orchestration ask --body "..."\` 로 사용자 결정 요청.
+- \`ACTION: ask-user T=... msg='...'\` → \`orca orchestration ask --question "..."\` 로 사용자 결정 요청.
 - \`ACTION: question sender=... body='...'\` → ask 로 사용자 중계 후 \`orca orchestration reply --to <sender> --body "..."\` 로 응답.
 - \`ACTION: escalation ...\` → ask 로 사용자 긴급 알림.
 - \`ACTION: task-complete T=...\` → **메인 루프 즉시 종료 (매우 중요)**:
@@ -121,6 +121,25 @@ coord-step.sh 는 각 메시지 처리 후 보통 **마지막 라인에 \`ACTION
 ack 하지 않으면 **planner succeeded 가 영원히 재배포되어 architect worker_done 이 큐에 밀려 처리 불가** 등의 교착 발생.
 
 **이 루프를 모든 required_roles 완료까지 반복합니다. \`task-complete\` 받으면 루프 즉시 종료.**
+
+## ⚠️ Coordinator 는 \`ask\` 호출 금지
+
+\`orca orchestration ask\` 는 **supervised Dispatch 안의 worker 만** 호출 가능합니다. Coordinator (= Run owner) 는 Dispatch 가 아니므로 \`ask\` 호출 시 \`supervised Dispatch 필요\` 에러.
+
+**worker question 수신 시 중계 흐름**:
+1. coord-step.sh 가 자동으로 Slack 에 \`🔔 응답 필요 — T### <본문>\` 포스트 (handle_question 내장).
+2. 사용자가 Slack 스레드에 응답 → relay.sh 가 받아 Coordinator 세션에 \`terminal send\` 로 주입.
+3. Coordinator (= 당신) 는 그 응답을 worker 에 \`reply\` 로 전달:
+
+       orca orchestration reply --to <sender_dispatch_id> --body "<사용자 응답>" --json
+
+\`sender_dispatch_id\` 는 ACTION: question 라인의 \`sender=\` 값. 또는 msg_json 의 \`senderId\` 필드.
+
+**사용자에게 질문해야 하는 경우 (worker 가 아니라 Coordinator 가)**: \`ask\` 대신 **slack/send.sh 직접 호출**:
+
+    "$MAIN_REPO_ROOT/scripts/slack/send.sh" --text "T### 질문: ..." --thread "$(cat .harness/chat/T###.slack)"
+
+그리고 사용자 응답 대기 — relay 가 받아 당신 세션에 주입.
 
 ## ⚠️ 매우 중요 — 단일 소비자 원칙 (중복 spawn 방지)
 
