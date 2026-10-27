@@ -15,6 +15,16 @@ function formatDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('ko-KR');
 }
 
+// 가입일 전용: 브라우저 로컬 타임존 기준 YYYY-MM-DD.
+// getFullYear/getMonth/getDate 는 로컬 TZ 기준이므로 UTC 절단(toISOString)과 달리
+// 자정 경계에서 로컬 날짜가 올바르게 반영된다. 파싱 실패 시 원본 문자열 유지.
+function formatDateYmd(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 export default function MePage() {
   const router = useRouter();
   const [load, setLoad] = useState<LoadState>({ status: 'loading' });
@@ -126,7 +136,7 @@ export default function MePage() {
             </div>
             <div className="profile-row">
               <span className="profile-row__label">가입일</span>
-              <span>{formatDate(load.member.createdAt)}</span>
+              <span>{formatDateYmd(load.member.createdAt)}</span>
             </div>
             <div className="profile-row">
               <span className="profile-row__label">최근 수정</span>

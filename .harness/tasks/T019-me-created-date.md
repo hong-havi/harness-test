@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,  agent: kiro }
   - { role: qa,        agent: kiro }
   - { role: reviewer,  agent: kiro }
-current_role: planner
+current_role: frontend
 role_history: []
 ports:
   web: 3190
@@ -78,3 +78,43 @@ updated_at: 2026-10-27
    같은 UTC 기반 절단은 금지 — 경계 케이스에서 날짜가 틀어짐.)
 - 파싱 실패 방어: `Number.isNaN(d.getTime())` 이면 원본 `iso` 반환.
 - QA 는 로컬 TZ(KST) 기준으로 날짜 포맷·zero-pad·updatedAt 회귀만 확인하면 됨.
+
+
+## Implementation (Frontend)
+
+### 변경 라우트/페이지
+- `apps/web/app/me/page.tsx` — '가입일'(createdAt) 값 렌더를 `formatDateYmd()` 로 교체.
+  - 신규 `formatDateYmd(iso)` 추가: 브라우저 로컬 TZ 기준 `YYYY-MM-DD`,
+    `getFullYear/getMonth(+1)/getDate` + `padStart(2,'0')` zero-pad.
+    파싱 실패(`Number.isNaN(d.getTime())`) 시 원본 `iso` 반환.
+  - 기존 `formatDate()` 는 '최근 수정'(updatedAt) 전용으로 그대로 유지 (날짜+시각, 회귀 없음).
+
+### 새 환경변수
+- 없음.
+
+### 범위
+- frontend-only. `apps/web/app/me/page.tsx` 1개 파일만 코드 변경.
+- `apps/api` / DB / 마이그레이션 / `lib/types.ts` 변경 없음 (git status 로 확인).
+
+### 수용 기준 자가 검증
+- [x] 린트 통과 — `pnpm exec next lint` → "No ESLint warnings or errors".
+- [x] 타입체크 통과 — `pnpm exec tsc --noEmit` → exit 0.
+- [x] '가입일' 포맷 `^\d{4}-\d{2}-\d{2}$` (시각 미표시) — `formatDateYmd` 로직상 보장.
+- [x] zero-pad — `padStart(2,'0')` 로 월·일 2자리 보장 (예: `2024-03-05`).
+- [x] 로컬 TZ 기준 — `getFullYear/getMonth/getDate` 사용 (UTC 절단 아님). KST 환경에서
+      `2024-01-15T23:30:00Z` → `2024-01-16` 로 날짜 경계 반영.
+- [x] updatedAt 회귀 없음 — '최근 수정' 행은 `formatDate()` 그대로.
+- [x] 비정상 createdAt 방어 — NaN 시 원본 문자열 노출, 페이지 비파괴.
+- [x] `dangerouslySetInnerHTML` 미사용.
+
+### 로컬 재현 / QA 테스트 시나리오
+전제: `docker compose up` (이 worktree 포트 web=3190 / api=4190 / db=3325), 회원 로그인 완료.
+
+1. 브라우저에서 `http://localhost:3190/me` 접속.
+   - 기대: '가입일' 행이 `YYYY-MM-DD` (예: `2024-01-16`) 형태. 시각 미표시.
+   - 기대: '최근 수정' 행은 기존처럼 날짜+시각(`YYYY. M. D. 오후 h:mm:ss`) 유지.
+2. zero-pad 확인: createdAt 이 1~9월/1~9일인 계정으로 접속 → `2024-03-05` 처럼 2자리.
+3. 로컬 TZ 경계: KST(+09:00) 환경에서 createdAt 의 UTC 시각이 15:00Z 이후면
+   로컬 날짜가 +1 일로 표시되는지 확인 (UTC 절단이면 하루 어긋남 → 버그).
+4. DevTools Console 에서 `document.cookie` 조회 → `access_token` 미노출 (HttpOnly 유지, 회귀 확인용).
+5. (선택) 비정상 createdAt 방어: 정상 경로에선 재현 불가하나, 코드상 NaN 시 원본 반환으로 페이지 비파괴.
