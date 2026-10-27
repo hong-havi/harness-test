@@ -85,6 +85,52 @@ extract_task_id() {
   fi
 }
 
+# ─────────────────────────────────────────────────────────────
+# 메타 명령 처리 (Coordinator 안 거침, relay 가 직접 Slack 에 답)
+# 지원: status, help, list
+# ─────────────────────────────────────────────────────────────
+SENDER="$SCRIPT_DIR/send.sh"
+
+post_slack() {
+  local text="$1" thread="${2:-}"
+  if [[ -n "$thread" ]]; then
+    "$SENDER" --text "$text" --thread "$thread" >/dev/null 2>&1 || true
+  else
+    "$SENDER" --text "$text" >/dev/null 2>&1 || true
+  fi
+}
+
+# body 가 메타 명령이면 처리하고 0 리턴, 아니면 1
+handle_meta_command() {
+  local body="$1" thread_ts="$2"
+  local cmd
+  cmd="$(echo "$body" | awk '{print tolower($1)}')"
+  case "$cmd" in
+    status|상태)
+      log "META: status"
+      local out
+      out="$("$MAIN_REPO_ROOT/scripts/harness-status.sh" 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g')"
+      post_slack "\`\`\`\n$out\n\`\`\`" "$thread_ts"
+      return 0 ;;
+    help|도움말|헬프)
+      log "META: help"
+      post_slack "*harness-bot 명령* _(모두 봇 멘션 필요)_
+• \`status\` — 활성 task + 세션 요약
+• \`help\` — 이 메시지
+• \`list\` — 활성 task 테이블
+• \`T### <메시지>\` — 그 task 의 Coordinator 에 메시지 주입 (예: \`T020 merge\`)
+• (활성 task 1개면 \`T###\` 생략 가능)" "$thread_ts"
+      return 0 ;;
+    list|목록)
+      log "META: list"
+      local out
+      out="$("$MAIN_REPO_ROOT/scripts/tasks.sh" list 2>&1)"
+      post_slack "\`\`\`\n$out\n\`\`\`" "$thread_ts"
+      return 0 ;;
+  esac
+  return 1
+}
+
 # 메시지에서 봇 멘션 토큰 (<@Uxxx>) 과 선행 T### 제거
 clean_text() {
   local text="$1"
@@ -114,10 +160,20 @@ run_once() {
     # cursor 와 같거나 더 오래된 메시지는 skip (안전망)
     if [[ "$ts" == "$cursor" ]]; then continue; fi
 
+    local body
+    body="$(clean_text "$text")"
+    [[ -z "$body" ]] && { log "SKIP (empty after clean): ts=$ts"; last_ts="$ts"; continue; }
+
+    # 메타 명령 (status/help/list) 먼저 처리 — 활성 task 없어도 응답.
+    if handle_meta_command "$body" "$ts"; then
+      last_ts="$ts"; continue
+    fi
+
     local task_id
     task_id="$(extract_task_id "$text")"
     if [[ -z "$task_id" ]]; then
-      log "SKIP (no task-id): ts=$ts user=$user text='${text:0:80}'"
+      log "SKIP (no task-id, no meta): ts=$ts user=$user text='${text:0:80}'"
+      post_slack "⚠️ task-id 없이 명령을 받았습니다. 활성 task 가 여러 개거나 없을 때는 \`T### <명령>\` 으로 명시해주세요. \`help\` 로 사용법 확인." "$ts"
       last_ts="$ts"; continue
     fi
 
@@ -125,16 +181,14 @@ run_once() {
     handle="$(coord_handle_for "$task_id")" || handle=""
     if [[ -z "$handle" ]]; then
       log "SKIP (no coord handle for $task_id): ts=$ts user=$user"
+      post_slack "⚠️ $task_id 의 Coordinator 세션을 찾지 못했습니다 (아직 안 떴거나 crash). \`coord-recover.sh $task_id\` 로 재시작하세요." "$ts"
       last_ts="$ts"; continue
     fi
-
-    local body
-    body="$(clean_text "$text")"
-    [[ -z "$body" ]] && { log "SKIP (empty after clean): ts=$ts"; last_ts="$ts"; continue; }
 
     log "RELAY → $task_id (handle=${handle:0:20}…) user=$user body='${body:0:120}'"
     if ! orca terminal send --terminal "$handle" --text "$body" --enter --wait-submit 10 --json >/dev/null 2>&1; then
       log "  ⚠ orca terminal send 실패 (handle 죽었을 수 있음)"
+      post_slack "⚠️ $task_id Coordinator 터미널에 메시지 주입 실패 (handle=${handle:0:20}…). crash 가능성." "$ts"
     fi
 
     last_ts="$ts"
