@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: planner
+current_role: frontend
 role_history: []
 ports:
   web: 3300
@@ -142,19 +142,30 @@ _(T030 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 ---
 
 ## Implementation (Frontend)
-<frontend 작성>
+
+### 변경 파일
+- `apps/web/app/signup/page.tsx` — 상단 제목 `<h1>회원가입</h1>` → `<h1>가입하기</h1>` (1줄). 그 외 변경 없음.
 
 ### 추가 라우트/페이지
-- `/path` — 설명
+- 없음 (기존 `/signup` 페이지의 제목 카피만 변경).
 
 ### 새 환경변수
-- `NEXT_PUBLIC_...`
+- 없음.
 
 ### 로컬 재현 (브라우저 시나리오)
-1. ...
+1. `docker compose up` (또는 `pnpm --filter web dev`) 로 web 기동.
+2. 브라우저에서 `http://localhost:3300/signup` 접속 (T030 web 포트).
+3. 폼 카드 상단 제목이 '가입하기' 로 표시되는지 확인.
+4. Header 네비 / login 하단 / 홈 의 '회원가입' 링크 텍스트는 그대로인지 확인.
 
 ### 수용 기준 자가 검증
-- [x] ...
+- [x] `apps/web/app/signup/page.tsx` 상단 `<h1>` 텍스트가 정확히 `가입하기`.
+- [x] Header 네비게이션 '회원가입' 링크 텍스트 유지 (변경 없음).
+- [x] login 페이지 하단 '회원가입' 링크 텍스트 유지 (변경 없음).
+- [x] 홈(page.tsx) '회원가입' 링크 텍스트 유지 (변경 없음).
+- [x] `apps/api` / DB / 마이그레이션 변경 0건.
+- [x] `apps/web` typecheck 통과 (`tsc --noEmit` EXIT=0).
+- [x] `apps/web` lint 통과 (`next lint` — No ESLint warnings or errors).
 
 ---
 

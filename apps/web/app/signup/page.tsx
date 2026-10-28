@@ -40,7 +40,7 @@ export default function SignupPage() {
   return (
     <div className="container">
       <div className="card">
-        <h1>회원가입</h1>
+        <h1>가입하기</h1>
         <p className="subtitle">계정을 만들어 게시판을 이용하세요.</p>
 
         {error && (
