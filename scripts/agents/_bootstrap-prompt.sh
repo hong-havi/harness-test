@@ -16,13 +16,22 @@ cat <<EOF
 
 이 세션은 Orca orchestration **worker** 세션입니다. preamble 로 받은 Task ID / Dispatch ID 를 기억하세요 (worker_done 호출 시 필요).
 
-## 세션 시작
+## 세션 시작 — 반드시 worktree 로 cd (Phase 4 R)
 
-가장 먼저 아래 명령을 실행하여 역할 지침·task 전체 컨텍스트·최근 chat log·PRD 를 로드:
+**매 Shell 호출 전에** worktree 로 cd 확인하세요:
+
+    cd $(git rev-parse --show-toplevel 2>/dev/null)  # 현재 위치가 worktree 인지 확인
+    pwd   # D:\workspace_hong\harness-test\.worktrees\${TASK_ID}-* 이어야 함
+
+❌ **금지**: main repo (\`D:\workspace_hong\harness-test\` 자체) 에서 \`git add/commit\` 호출. main 에 worker 커밋이 쌓이면 \`tasks.sh merge\` 가 unstaged change 로 실패 (T026/T027 사례).
+
+✅ **올바른 작업 위치**: \`.worktrees/${TASK_ID}-<slug>/\` 안. 거기서 커밋.
+
+그 다음 역할 지침·task 전체 컨텍스트·최근 chat log·PRD 로드:
 
     ./scripts/role.sh ${ROLE}
 
-그 다음 \`.harness/roles/${ROLE}.md\` 지침대로 작업하세요.
+그리고 \`.harness/roles/${ROLE}.md\` 지침대로 작업하세요.
 
 ## ⚠️ Shell 명령 — \`bash\` 접두어 절대 금지
 

@@ -263,12 +263,11 @@ cmd_new() {
   info "  worktree:  $wt_rel"
   info "  task file: $task_rel"
 
-  # 1) worktree + 브랜치 (main 기반)
-  cd "$REPO_ROOT"
-  git worktree add -b "$branch" "$wt_abs" "$MAIN_BRANCH" >/dev/null
-  info "  → git worktree 생성"
+  # Phase 4 R: 순서 교정 — task.md 를 main 에 **먼저** 커밋한 뒤 worktree 생성.
+  # 기존 순서 (worktree 먼저 → main 에 task.md 커밋) 는 worktree HEAD 가 task.md
+  # 커밋 1개 뒤로 밀려 worker 가 task.md 를 못 보던 결함 (T026/T027 발견).
 
-  # 2) task.md 생성 (template 복사 + 치환)
+  # 1) task.md 생성 (template 복사 + 치환)
   mkdir -p "$TASKS_DIR"
   local today
   today="$(date +%Y-%m-%d)"
@@ -294,15 +293,15 @@ cmd_new() {
     "$TEMPLATE_TASK" > "$task_abs"
   info "  → task.md 생성 (agent: ${agent})"
 
-  # 3) task.md 를 worktree 쪽에도 복사해 두되 — 실제로는 main에서 git add 후
-  #    worktree 가 보도록 커밋 전까지는 각자 영역. 간단히 main 쪽에만 두고
-  #    각 역할은 main 트리의 파일을 참조하는 전략은 ff-only merge 와 충돌.
-  #
-  #    선택: main 에 task.md 커밋하고, worktree 는 main 기반이므로 자동 보임.
+  # 2) main 에 task.md 커밋 (worktree 생성 전!)
   cd "$REPO_ROOT"
   git add "$task_rel"
   git -c core.hooksPath=/dev/null commit -m "${id} [harness]: create task ${slug}" >/dev/null
   info "  → main 에 task.md 커밋"
+
+  # 3) worktree + 브랜치 (방금 커밋한 main HEAD 기반 → task.md 포함)
+  git worktree add -b "$branch" "$wt_abs" "$MAIN_BRANCH" >/dev/null
+  info "  → git worktree 생성 (task.md 포함)"
 
   # 4) worktree 쪽에 compose override + .env 생성 (gitignore 됨)
   mkdir -p "$wt_abs"

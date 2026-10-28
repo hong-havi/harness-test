@@ -283,6 +283,21 @@ handle_worker_done() {
       (cd "$MAIN_REPO_ROOT" && git add -A && git -c core.hooksPath=/dev/null commit -m "${task_id} [harness]: auto-archive after task-complete" >/dev/null 2>&1) || true
     fi
 
+    # Phase 4 R: Coordinator 세션 자동 close.
+    # preamble 지시로는 Coordinator claude 가 "다음 bash 호출 안 함" 지시 따르기 어려워
+    # 매번 수동 close 필요했음. 이제 coord-step.sh 가 직접 close 명령 호출.
+    local coord_handle
+    coord_handle="$(grep '"role":"coordinator"' "$CHAT_DIR/${task_id}.handles" 2>/dev/null | tail -1 \
+      | sed -nE 's/.*"handle"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
+    if [[ -n "$coord_handle" ]]; then
+      info "  Coordinator 세션 자동 close 예약 (5초 뒤): $coord_handle"
+      # 백그라운드로 분리 — 현재 함수 리턴 후 Coordinator 가 ACTION 처리 끝낸 뒤 close
+      ( sleep 5
+        orca terminal close --terminal "$coord_handle" --json >/dev/null 2>&1 || true
+      ) >/dev/null 2>&1 &
+      disown 2>/dev/null || true
+    fi
+
     echo "ACTION: task-complete T=$task_id"
     return 0
   fi
