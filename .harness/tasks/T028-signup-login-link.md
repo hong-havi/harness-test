@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: qa
+current_role: reviewer
 role_history: []
 ports:
   web: 3280
@@ -220,19 +220,43 @@ YAGNI 원칙에 따라 신규 코드를 추가하지 않고, 현황이 요구/Ac
 ---
 
 ## Review notes
-<reviewer 작성>
 
 ### 결과
-- 결정: pass | rework
+- 결정: **pass** (approve for merge — 사용자 승인 대기)
 - 일자: 2026-10-28
-- 병합 SHA: <sha> (pass 시)
+- 병합 SHA: <merge 수행 후 기록>
+
+### 리뷰 범위
+- 변경 diff: `git diff main...HEAD` → `.harness/tasks/T028-signup-login-link.md` 1건뿐 (frontend/qa 기록). **코드 무변경** (apps/web·apps/api 손대지 않음).
+- 요구 요소(`/signup` → `/login` 링크)는 이미 존재 → planner/frontend 가 YAGNI 로 무변경 결론. reviewer 는 현황 정합성 + 안전성만 검증.
+
+### 체크리스트 (파일:라인 근거)
+1. **PRD 정합성** ✅
+   - `apps/web/app/signup/page.tsx` 끝부분(`</form>` 직후)에 `<p className="form-footer">이미 계정이 있으신가요? <Link href="/login">로그인</Link></p>` 존재 → Acceptance 4개 전부 충족.
+   - §7 Out of Scope 혼입 없음(백엔드/API/DB 무변경). API 계약(§5) 변경 없음.
+2. **보안** ✅
+   - 고정 문자열 렌더, `dangerouslySetInnerHTML` 미사용 → XSS 벡터 없음.
+   - diff 에 `.env`/`.env.*`/토큰/비밀값 없음 (task.md 1건만). JWT/쿠키/Guard/CSRF 경로 변경 없음(API 무변경).
+   - QA 가 로컬 검증용으로 보정한 `.env` 는 gitignore → 커밋 diff 에 미포함 확인.
+3. **리소스/누수** ✅
+   - `next/link` 기반 CSR 네비게이션. 신규 useEffect/listener/timer/DB 리소스 추가 없음.
+4. **성능/데이터** ✅
+   - 쿼리/스키마/마이그레이션 변경 없음. N+1·인덱스 이슈 무관.
+5. **코드 품질** ✅
+   - 코드 무변경(YAGNI 준수). 커밋 메시지 전부 `T028 [kiro]:`/`T028 [harness]:` 접두어 준수. `console.log`/디버그 잔존 없음.
+6. **테스트** ✅
+   - QA report = **pass**. 런타임 렌더 HTML 기준 어서션(`<a href="/login">로그인</a>`, 바이트 순서로 form-footer 가 `</form>` 다음 확인), /login 대칭 링크 회귀까지 커버.
+7. **범위** ✅
+   - 태스크 범위 밖 리팩터/수정 없음.
 
 ### Blocker
-- 없음 또는
-- `file.ts:42` — <문제>, <수정 가이드>
+- 없음 (0건).
 
 ### Suggest
-- `file.ts:88` — <개선 아이디어>
+- 없음.
+
+### 병합 메모
+- `git rev-list --left-right --count main...HEAD` = `1  4` (main 이 T028 create-task 1건 선행, 히스토리 분기). `tasks.sh merge` 가 rebase + ff-only 로 처리. 두 브랜치의 task.md add/add 는 rebase 시 우리 쪽(상위집합)으로 해소 필요 — merge 스크립트 rebase 단계에서 확인.
 
 ### 체크리스트 요약
 - PRD 정합성: ✅
