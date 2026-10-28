@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: frontend
+current_role: qa
 role_history: []
 run_id: run_3b4a791aaa67
 ports:
@@ -179,24 +179,24 @@ _(T029 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 ---
 
 ## QA report
-<qa 작성>
 
 ### 결과
-- 결정: pass | fail
+- 결정: **pass**
 - 일자: 2026-10-28
-- 환경: WEB=:<port>/API=:<port>/DB=:<port>
+- 환경: 정적 카피 변경 — 소스/빌드 검증 (WEB=:3290/API=:4290/DB=:3335 스코프). Docker 전체 기동은 one-word 정적 레이블 변경에 불비례하여 생략, 대신 typecheck+lint+소스 확인으로 검증.
 
 ### 수용 기준 검증
-- [x] <기준> — pass
-- [ ] <기준> — fail → 아래 참조
+- [x] `/login` 제출 버튼 텍스트 = `로그인하기` — pass (page.tsx:84 idle 분기 `{submitting ? '처리 중…' : '로그인하기'}`)
+- [x] 제출 중 버튼 텍스트 `처리 중…` 유지 — pass (submitting 분기 그대로 보존)
+- [x] Header `/login` 링크 등 다른 '로그인' 문구 미변경 — pass (Header.tsx:62 `로그인` 유지; page/join/signup 미변경)
+- [x] `apps/api` 하위 미변경 — pass (commit d0dda9f stat: apps/web/app/login/page.tsx 1건 + task.md만)
+- [x] `pnpm --filter web build`/타입체크 통과 — pass (typecheck exit 0, lint exit 0 "No ESLint warnings or errors")
+
+### 회귀 (Regression)
+- grep `로그인` 전수 확인: login 페이지 버튼 레이블 1건만 변경. 로그인 플로우 진입점(Header 링크, join/signup 안내 링크) 텍스트 불변 — 네비게이션 회귀 없음.
 
 ### 발견 사항
-- 없음 또는
-- **[FAIL]** <요약>
-  - 재현:
-    1. ...
-  - 기대: ...
-  - 실제: ...
+- 없음. 커밋 d0dda9f 가 계획대로 단일 문자열 1줄만 변경. 민감정보 노출 없음.
 
 ---
 
