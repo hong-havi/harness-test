@@ -592,9 +592,15 @@ cmd_merge() {
     info "  worktree 터미널 close"
   fi
 
-  # worktree + 브랜치 정리
+  # worktree + 브랜치 정리 (Phase 4 S: git worktree remove 실패해도 반드시 디렉토리 삭제)
   if [[ -d "$wt_abs" ]]; then
-    git worktree remove --force "$wt_abs" 2>/dev/null || rm -rf "$wt_abs" 2>/dev/null || info "  ⚠ worktree 디렉토리 완전 삭제 실패 (수동 cleanup 필요)"
+    git worktree remove --force "$wt_abs" 2>/dev/null || true
+    # git remove 가 성공해도 Windows 에서 node_modules/.pnpm 심볼릭 링크로 디렉토리 남을 때 있음.
+    # 또는 kiro 가 열어둔 파일 핸들로 remove 실패. 반드시 rm -rf 로 마무리.
+    if [[ -d "$wt_abs" ]]; then
+      rm -rf "$wt_abs" 2>/dev/null || info "  ⚠ worktree 디렉토리 삭제 실패 (수동 rm -rf $wt_abs)"
+    fi
+    git worktree prune 2>/dev/null || true
     info "  worktree removed"
   fi
   git branch -D "$branch" >/dev/null 2>&1 || true
@@ -611,6 +617,23 @@ cmd_merge() {
     git mv "$f" ".harness/archive/$f_name" 2>/dev/null || mv "$f" "$ARCHIVE_DIR/"
     git -c core.hooksPath=/dev/null commit -m "${id} [harness]: archive task.md after merge" >/dev/null 2>&1 || true
     info "  task.md → archive"
+  fi
+
+  # Phase 4 S: Slack 스레드에 완료 알림 (reviewer/Coordinator 가 못 보내는 경우 2차 방어).
+  # merge 가 완료된 시점에 tasks.sh 가 직접 포스트. chat.sh deliver 대신 send.sh 로 간단히.
+  local slack_file="$CHAT_DIR/${id}.slack"
+  if [[ -z "$slack_file" || ! -f "$slack_file" ]]; then
+    # archive 쪽도 체크 (방금 archive 로 옮겨졌을 수 있음)
+    slack_file="$ARCHIVE_DIR/${id}.slack"
+  fi
+  if [[ -n "${SLACK_BOT_TOKEN:-}" && -n "${SLACK_CHANNEL_ID:-}" && -f "$slack_file" ]]; then
+    local thread_ts merge_sha
+    thread_ts="$(cat "$slack_file")"
+    merge_sha="$(git log --oneline -1 --pretty=%h 2>/dev/null)"
+    "$SCRIPT_DIR/slack/send.sh" \
+      --text "✅ *${id}* merged → main (${merge_sha}). 모든 role 소진, 체인 완료." \
+      --thread "$thread_ts" >/dev/null 2>&1 || true
+    info "  Slack 완료 알림 포스트"
   fi
 
   info "완료: $id merged."
@@ -653,7 +676,9 @@ cmd_drop() {
     orca terminal close --worktree "path:$WT_ORCA" --all --json >/dev/null 2>&1 || true
   fi
   if [[ -d "$wt_abs" ]]; then
-    git worktree remove --force "$wt_abs"
+    git worktree remove --force "$wt_abs" 2>/dev/null || true
+    [[ -d "$wt_abs" ]] && rm -rf "$wt_abs" 2>/dev/null
+    git worktree prune 2>/dev/null || true
   fi
   git branch -D "$branch" >/dev/null 2>&1 || true
 

@@ -405,27 +405,9 @@ handle_question() {
   sender="$(extract_payload_field "$msg" senderId)"
   task_id="$(task_id_for_sender "$sender")" || task_id=""
 
-  # Phase 4 Q+: 중복 포스트 방지.
-  # worker 가 Phase 4 Q 지시대로 chat.sh append question 을 먼저 호출했으면
-  # 이미 Slack 스레드에 포스트됨. Coordinator 가 또 포스트하면 중복.
-  # → 최근 10초 안에 같은 task 의 chat log 에 question 이 있으면 skip.
-  if [[ -n "$task_id" && -f "$CHAT_DIR/${task_id}.jsonl" ]]; then
-    local recent_question
-    recent_question="$(tail -5 "$CHAT_DIR/${task_id}.jsonl" | grep -c '"type":"question"' | head -1)"
-    if [[ "${recent_question:-0}" -gt 0 ]]; then
-      echo "ACTION: question T=${task_id} skipped (worker chat.sh 가 이미 Slack 미러함)"
-      return 0
-    fi
-  fi
-
-  # body 가 비면 msg_json 통째를 raw dump 로 Slack 에 — 사용자가 raw 보고 응답 가능
-  if [[ -z "$body" ]]; then
-    body="(⚠️ 본문 추출 실패 — raw payload)
-\`\`\`
-$(echo "$msg" | head -c 1500)
-\`\`\`"
-  fi
-  post_slack_question "$task_id" "$body" "$sender" question
+  # Phase 4 S: Slack 포스트 폐기 — chat.sh deliver/question 이 미러 담당.
+  # Coordinator 가 또 포스트하면 중복 "🔔 응답 필요" 노이즈 발생 (사용자 지적).
+  # Coordinator 는 "질문 수신 알림" 만 stdout 에 — Coordinator claude 가 reply 로 처리.
   echo "ACTION: question T=${task_id:-?} sender=$sender body='${body:0:200}'"
 }
 
@@ -436,12 +418,7 @@ handle_escalation() {
   body="$(extract_body "$msg")"
   sender="$(extract_payload_field "$msg" senderId)"
   task_id="$(task_id_for_sender "$sender")" || task_id=""
-  if [[ -z "$body" ]]; then
-    body="(⚠️ 본문 추출 실패 — raw)
-\`\`\`
-$(echo "$msg" | head -c 1500)
-\`\`\`"
-  fi
+  # escalation 은 긴급 — Slack 포스트 유지 (chat.sh 가 못 미러할 가능성)
   post_slack_question "$task_id" "$body" "$sender" escalation
   echo "ACTION: escalation T=${task_id:-?} body='${body:0:200}'"
 }
