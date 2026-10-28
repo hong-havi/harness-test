@@ -4,7 +4,7 @@ title: signup-login-link
 slug: signup-login-link
 branch: task/T028-signup-login-link
 worktree: .worktrees/T028-signup-login-link
-status: planning          # planning | in-flight | paused | merged | dropped
+status: merged
 required_roles:
   - { role: planner,    agent: kiro }
   - { role: frontend,   agent: kiro }
