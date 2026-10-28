@@ -293,13 +293,47 @@ cmd_new() {
     "$TEMPLATE_TASK" > "$task_abs"
   info "  → task.md 생성 (agent: ${agent})"
 
-  # 2) main 에 task.md 커밋 (worktree 생성 전!)
+  # Phase 4 S+: User Request 삽입을 commit 전으로 이동 (amend 방지).
+  # 기존엔 commit → worktree add → amend 로 main HEAD 가 바뀌면서 branch 가
+  # amend 이전 SHA 참조 → rebase 때 add/add conflict (T029).
+  if [[ -n "$description" ]]; then
+    local tmpf="${task_abs}.tmp"
+    local req_file="${task_abs}.req"
+    printf '%s\n' "$description" > "$req_file"
+    local lc
+    lc=$(wc -l < "$req_file")
+    awk -v tid="$id" -v reqf="$req_file" -v lc="$lc" '
+      BEGIN { fm=0; done=0 }
+      /^---$/ { fm++; print; if (fm==2 && !done) {
+        print ""
+        print "## User Request"
+        print ""
+        if (lc+0 <= 1) {
+          while ((getline line < reqf) > 0) print "> " line
+        } else {
+          while ((getline line < reqf) > 0) print line
+        }
+        close(reqf)
+        print ""
+        print "---"
+        print ""
+        print "_(" tid " 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을 기준으로 Plan 섹션을 작성한다.)_"
+        print ""
+        done=1
+      }; next }
+      { print }
+    ' "$task_abs" > "$tmpf" && mv "$tmpf" "$task_abs"
+    rm -f "$req_file"
+    info "  → task.md 에 User Request 섹션 삽입 (commit 전)"
+  fi
+
+  # 2) main 에 task.md 커밋 (User Request 섹션 포함, worktree 생성 전!)
   cd "$REPO_ROOT"
   git add "$task_rel"
   git -c core.hooksPath=/dev/null commit -m "${id} [harness]: create task ${slug}" >/dev/null
   info "  → main 에 task.md 커밋"
 
-  # 3) worktree + 브랜치 (방금 커밋한 main HEAD 기반 → task.md 포함)
+  # 3) worktree + 브랜치 (최종 commit 참조 → task.md 포함)
   git worktree add -b "$branch" "$wt_abs" "$MAIN_BRANCH" >/dev/null
   info "  → git worktree 생성 (task.md 포함)"
 
@@ -318,42 +352,7 @@ cmd_new() {
     > "$wt_abs/docker-compose.override.yml"
   info "  → docker-compose.override.yml 생성"
 
-  # 5) description 이 주어지면 task.md 에 "## User Request" 섹션 삽입 (frontmatter 바로 뒤)
-  # 짧은 1줄은 blockquote, 긴 multi-line 은 fenced block 로 그대로 보존.
-  if [[ -n "$description" ]]; then
-    local tmpf="${task_abs}.tmp"
-    local req_file="${task_abs}.req"
-    printf '%s\n' "$description" > "$req_file"
-    local lc
-    lc=$(wc -l < "$req_file")
-    awk -v tid="$id" -v reqf="$req_file" -v lc="$lc" '
-      BEGIN { fm=0; done=0 }
-      /^---$/ { fm++; print; if (fm==2 && !done) {
-        print ""
-        print "## User Request"
-        print ""
-        if (lc+0 <= 1) {
-          # 짧은 한 줄 — blockquote
-          while ((getline line < reqf) > 0) print "> " line
-        } else {
-          # 긴 multi-line — 원문 그대로 (markdown 형식 유지)
-          while ((getline line < reqf) > 0) print line
-        }
-        close(reqf)
-        print ""
-        print "---"
-        print ""
-        print "_(" tid " 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을 기준으로 Plan 섹션을 작성한다.)_"
-        print ""
-        done=1
-      }; next }
-      { print }
-    ' "$task_abs" > "$tmpf" && mv "$tmpf" "$task_abs"
-    rm -f "$req_file"
-    git add "$task_rel"
-    git -c core.hooksPath=/dev/null commit --amend --no-edit >/dev/null 2>&1 || true
-    info "  → task.md 에 User Request 섹션 추가"
-  fi
+  # (User Request 섹션은 Phase 4 S+ 로 commit 전으로 이동 — 위에서 이미 처리됨)
 
   # 6) chat 로그 초기화 + user request 를 즉시 append (Slack 스레드 첫 메시지가 됨)
   mkdir -p "$CHAT_DIR"
@@ -592,13 +591,19 @@ cmd_merge() {
     info "  worktree 터미널 close"
   fi
 
-  # worktree + 브랜치 정리 (Phase 4 S: git worktree remove 실패해도 반드시 디렉토리 삭제)
+  # worktree + 브랜치 정리 (Phase 4 S++: Windows pnpm symlink 대응)
   if [[ -d "$wt_abs" ]]; then
     git worktree remove --force "$wt_abs" 2>/dev/null || true
-    # git remove 가 성공해도 Windows 에서 node_modules/.pnpm 심볼릭 링크로 디렉토리 남을 때 있음.
-    # 또는 kiro 가 열어둔 파일 핸들로 remove 실패. 반드시 rm -rf 로 마무리.
+    # Windows pnpm symlink 는 bash rm -rf 로 Permission denied. cmd rmdir /S /Q 로 delegate.
     if [[ -d "$wt_abs" ]]; then
-      rm -rf "$wt_abs" 2>/dev/null || info "  ⚠ worktree 디렉토리 삭제 실패 (수동 rm -rf $wt_abs)"
+      if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
+        local wt_win
+        wt_win="$(cygpath -w "$wt_abs" 2>/dev/null || echo "$wt_abs")"
+        cmd //c "rmdir /S /Q \"$wt_win\"" >/dev/null 2>&1 || true
+      fi
+      # 그래도 남으면 bash rm -rf 재시도
+      [[ -d "$wt_abs" ]] && rm -rf "$wt_abs" 2>/dev/null
+      [[ -d "$wt_abs" ]] && info "  ⚠ worktree 디렉토리 삭제 실패 (수동: Remove-Item -Recurse -Force -LiteralPath $wt_abs)"
     fi
     git worktree prune 2>/dev/null || true
     info "  worktree removed"
