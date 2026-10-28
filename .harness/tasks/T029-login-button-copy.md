@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: qa
+current_role: reviewer
 role_history: []
 run_id: run_3b4a791aaa67
 ports:
@@ -201,25 +201,32 @@ _(T029 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 ---
 
 ## Review notes
-<reviewer 작성>
 
 ### 결과
-- 결정: pass | rework
+- 결정: **pass** (approve for merge)
 - 일자: 2026-10-28
-- 병합 SHA: <sha> (pass 시)
+- 병합 SHA: <merge 수행 후 기록>
+
+### 검토 범위
+- commit log: planner(d62815e) → frontend(d0dda9f) → qa(4d029a8)
+- diff: `git diff main..HEAD` — 변경 파일 2건 (`.harness/tasks/T029-login-button-copy.md`, `apps/web/app/login/page.tsx`)
+- 소스 변경 1줄: `page.tsx:84` `{submitting ? '처리 중…' : '로그인'}` → `{submitting ? '처리 중…' : '로그인하기'}`
 
 ### Blocker
-- 없음 또는
-- `file.ts:42` — <문제>, <수정 가이드>
+- 없음.
 
 ### Suggest
-- `file.ts:88` — <개선 아이디어>
+- 없음.
 
-### 체크리스트 요약
-- PRD 정합성: ✅
-- 보안: ✅
-- 리소스/누수: ✅
-- 성능/데이터: ✅
-- 코드 품질: ✅
-- 테스트: ✅
-- 범위: ✅
+### 체크리스트 요약 (근거 포함)
+- PRD 정합성: ✅ — 순수 프론트 카피 변경, user 요구와 일치. §7 Out of Scope 침범 없음, API 계약 변경 없음.
+- 보안: ✅ — 시크릿/토큰 없음, auth·JWT·CORS 무변경, diff 에 `.env` 없음, 정적 문자열이라 인젝션 표면 없음.
+- 리소스/누수: ✅ — 해당 없음 (한 줄 레이블, 신규 리소스·effect·listener 없음).
+- 성능/데이터: ✅ — 해당 없음 (쿼리·스키마·마이그레이션 없음).
+- 코드 품질: ✅ — 단일 줄, 의도 명확, 디버그 코드 없음, 커밋 접두어 `T029 [kiro]:` 준수.
+- 테스트: ✅ — QA report = pass (typecheck exit 0, lint "No ESLint warnings or errors"), happy + 회귀 경로 커버.
+- 범위: ✅ — grep `로그인` 전수 확인: login 제출 버튼 idle 레이블 1건만 변경. Header(`Header.tsx:62`)·page·join·signup 의 `로그인` 문구 불변. `apps/api` 무변경.
+
+### 병합 메모
+- main 이 HEAD 보다 1 커밋 앞섬 (`81906ca` — task.md scaffold 생성). ff-only 직접 불가 → `tasks.sh merge` 가 rebase 선행.
+- rebase 시 `.harness/tasks/T029-login-button-copy.md` 에서 충돌 가능 (양쪽 모두 해당 파일 수정). 소스(`page.tsx`) 충돌 없음. task.md 충돌은 reviewer 범위 내 해결 가능.
