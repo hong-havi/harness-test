@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: planner
+current_role: frontend
 role_history: []
 ports:
   web: 3280
@@ -140,19 +140,48 @@ updated_at: 2026-10-28
 ---
 
 ## Implementation (Frontend)
-<frontend 작성>
+
+### 결론: 무변경 (요구사항 기 충족)
+
+planner 분석대로, 요구 요소가 `apps/web/app/signup/page.tsx` 에 **이미 존재**한다.
+YAGNI 원칙에 따라 신규 코드를 추가하지 않고, 현황이 요구/Acceptance 와 일치함을 재확인만 수행했다.
+
+### 기존 구현 위치 (정적 검증)
+- `apps/web/app/signup/page.tsx` — `</form>` 바로 다음, 제출 버튼보다 DOM 상 아래에 위치:
+  ```tsx
+  <p className="form-footer">
+    이미 계정이 있으신가요? <Link href="/login">로그인</Link>
+  </p>
+  ```
+- `Link` 는 `next/link` 에서 상단 import 되어 있음 (CSR 네비게이션, 전체 새로고침 없음).
+- `.form-footer` 스타일은 `apps/web/app/globals.css:214` 에 정의되어 있어 스타일 누락 없음.
+- 사용자 입력 렌더 아님 (고정 문자열) → XSS 벡터 없음. `dangerouslySetInnerHTML` 미사용.
 
 ### 추가 라우트/페이지
-- `/path` — 설명
+- 없음 (신규 라우트/페이지 추가 없음).
 
 ### 새 환경변수
-- `NEXT_PUBLIC_...`
+- 없음.
 
-### 로컬 재현 (브라우저 시나리오)
-1. ...
+### 변경 파일
+- 코드 무변경. 본 task.md 의 Implementation (Frontend) 섹션 기록만 추가.
+
+### 로컬 재현 (브라우저 시나리오 — qa 참고)
+1. 워크트리에서 `docker compose up` (WEB=:3280 / API=:4280 / DB=:3334).
+2. 브라우저로 `http://localhost:3280/signup` 접속.
+3. 제출 버튼("가입하기") 아래에 "이미 계정이 있으신가요? 로그인" 노출 확인.
+4. "로그인" 링크 클릭 → `/login` 으로 이동 (href="/login").
+5. DOM 검사: `<p class="form-footer">` 가 `<form>` 바깥, form 다음 형제로 존재.
 
 ### 수용 기준 자가 검증
-- [x] ...
+- [x] /signup 제출 버튼 아래 "이미 계정이 있으신가요?" 텍스트 노출 — page.tsx form-footer 로 충족.
+- [x] "로그인" 링크가 `/login` 으로 이동 — `<Link href="/login">`.
+- [x] 링크가 `<form>` 바깥, 제출 버튼보다 아래(DOM 순서상 form 다음) — `</form>` 다음 `<p className="form-footer">`.
+- [x] 백엔드/API/DB 변경 없음 — `apps/api` 무변경, frontend-only.
+
+### 비고 (의존성 미설치로 인한 한계)
+- 이 워크트리에는 `node_modules` 가 설치되어 있지 않아 `next lint` / `tsc --noEmit` / `docker compose up` 런타임 검증은 수행하지 못했다.
+- 대신 소스 정적 검증(import 경로·JSX 유효성·CSS 클래스 정의 확인)으로 코드 정합성을 확인했다. 실제 렌더 검증은 qa 역할에서 수행한다.
 
 ---
 
