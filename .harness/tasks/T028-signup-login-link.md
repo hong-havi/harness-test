@@ -28,15 +28,6 @@ created_at: 2026-10-28
 updated_at: 2026-10-28
 ---
 
-## User Request
-
-> 회원가입 페이지(/signup) 하단 제출 버튼 밑에 '이미 계정이 있으신가요?' 텍스트 + /login 링크 추가. frontend-only, 백엔드 변경 없음.
-
----
-
-_(T028 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을 기준으로 Plan 섹션을 작성한다.)_
-
-
 # T028 — signup-login-link
 
 ## Plan
