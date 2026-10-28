@@ -15,6 +15,7 @@ required_roles:
   - { role: reviewer,   agent: kiro }
 current_role: planner
 role_history: []
+run_id: run_3b4a791aaa67
 ports:
   web: 3290
   api: 4290
