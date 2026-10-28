@@ -7,10 +7,7 @@ worktree: .worktrees/T030-signup-title-change
 status: planning          # planning | in-flight | paused | merged | dropped
 required_roles:
   - { role: planner,    agent: kiro }
-  - { role: architect,  agent: kiro }
-  # - { role: designer,   agent: kiro, mcp: [figma] }
-  - { role: backend,    agent: kiro }
-  # - { role: frontend,   agent: kiro }
+  - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
 current_role: planner
@@ -40,24 +37,35 @@ _(T030 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 # T030 — signup-title-change
 
 ## Plan
-<planner 작성>
 
 ### Why
-<사용자 가치 또는 기술적 이유>
+회원가입 페이지(`/signup`) 상단 제목 문구를 '회원가입' → '가입하기' 로 바꿔 사용자에게 더 행동 지향적인(call-to-action) 표현을 제공한다. 순수 카피(문구) 변경 요청.
 
 ### What
-<결과물 기준 — 무엇을 바꾸는가>
+- `/signup` 페이지의 **상단 제목** `<h1>` 텍스트를 `회원가입` → `가입하기` 로 변경.
+- 그 외 어떤 변경도 하지 않는다 (user: "다른 변경 없음").
 
 ### Scope
-- 포함: ...
-- 제외: ...
+- 포함: `apps/web/app/signup/page.tsx` 의 `<h1>회원가입</h1>` → `<h1>가입하기</h1>` 한 줄.
+- 제외:
+  - 네비게이션/링크 라벨의 '회원가입' (Header.tsx, login/page.tsx, page.tsx) — 이들은 `/signup` 로 이동하는 **링크 텍스트**이지 페이지 상단 제목이 아니므로 변경 금지.
+  - 백엔드(`apps/api`) / DB / 마이그레이션 — 변경 없음 (frontend-only).
+  - 스타일/레이아웃/subtitle 문구 — 변경 없음.
 
 ### Acceptance
-- [ ] <측정 가능한 수용 기준>
-- [ ] ...
+- [ ] `apps/web/app/signup/page.tsx` 의 상단 `<h1>` 텍스트가 정확히 `가입하기` 이다.
+- [ ] `/signup` 페이지 렌더 시 상단 제목이 '가입하기' 로 표시된다.
+- [ ] Header 네비게이션의 '회원가입' 링크 텍스트는 그대로 유지된다 (변경 없음).
+- [ ] login 페이지 하단 '회원가입' 링크 텍스트는 그대로 유지된다 (변경 없음).
+- [ ] 홈(page.tsx) 의 '회원가입' 링크 텍스트는 그대로 유지된다 (변경 없음).
+- [ ] `apps/api` / DB / 마이그레이션 변경 0건.
+- [ ] `apps/web` 빌드(lint/type)가 통과한다.
 
 ### Files touched (예상)
-- `apps/.../...`
+- `apps/web/app/signup/page.tsx` — 상단 `<h1>` 텍스트 1줄 변경 (line 43 부근)
+
+### related_prd
+- 해당 없음 (UI 카피 변경, 스펙 변경 아님 → PRD.md 수정 불필요)
 
 ---
 
