@@ -7,10 +7,7 @@ worktree: .worktrees/T029-login-button-copy
 status: planning          # planning | in-flight | paused | merged | dropped
 required_roles:
   - { role: planner,    agent: kiro }
-  - { role: architect,  agent: kiro }
-  # - { role: designer,   agent: kiro, mcp: [figma] }
-  - { role: backend,    agent: kiro }
-  # - { role: frontend,   agent: kiro }
+  - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
 current_role: planner
@@ -41,24 +38,37 @@ _(T029 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 # T029 — login-button-copy
 
 ## Plan
-<planner 작성>
 
 ### Why
-<사용자 가치 또는 기술적 이유>
+로그인 페이지의 제출 버튼 레이블을 더 명확한 행동 유도(CTA) 문구로 바꾼다. 단순 명사 '로그인' 보다 동사형 '로그인하기' 가 버튼 행위를 더 분명히 전달한다. 순수 카피 변경으로 사용자 가치(명확성) 외 기능/로직 영향은 없다.
 
 ### What
-<결과물 기준 — 무엇을 바꾸는가>
+`apps/web/app/login/page.tsx` 의 제출 버튼 idle 상태 레이블 `'로그인'` → `'로그인하기'` 로 변경한다. 제출 중(`submitting`) 상태의 `'처리 중…'` 레이블은 그대로 둔다.
+
+- 대상 위치: `apps/web/app/login/page.tsx:84`
+  - before: `{submitting ? '처리 중…' : '로그인'}`
+  - after:  `{submitting ? '처리 중…' : '로그인하기'}`
 
 ### Scope
-- 포함: ...
-- 제외: ...
+- 포함: `/login` 페이지 제출 버튼의 idle 레이블 문자열 1건 변경.
+- 제외:
+  - Header 의 `/login` 링크 텍스트(`로그인`) — 변경 안 함 (요구 범위 밖).
+  - 홈(`app/page.tsx`)·회원가입(`join`/`signup`) 페이지의 '로그인' 문구 — 변경 안 함.
+  - 백엔드(`apps/api`) 변경 없음.
+  - 스타일/레이아웃/로직 변경 없음.
 
 ### Acceptance
-- [ ] <측정 가능한 수용 기준>
-- [ ] ...
+- [ ] `/login` 접속 시 제출 버튼 텍스트가 `로그인하기` 로 표시된다.
+- [ ] 폼 제출 진행 중에는 버튼 텍스트가 `처리 중…` 으로 유지된다 (기존 동작 보존).
+- [ ] Header 의 `/login` 링크 등 다른 '로그인' 문구는 변경되지 않는다.
+- [ ] `apps/api` 하위 파일은 변경되지 않는다 (frontend-only).
+- [ ] `pnpm --filter web build` 혹은 타입체크가 통과한다.
 
 ### Files touched (예상)
-- `apps/.../...`
+- `apps/web/app/login/page.tsx` — 제출 버튼 idle 레이블 문자열 1건.
+
+### related_prd
+- 회원 모듈 / 로그인 화면 (UI 카피). PRD 스펙 변경은 불필요 — 문구 미세 조정이라 PRD.md 수정 없음.
 
 ---
 
