@@ -81,7 +81,7 @@ function LoginForm() {
         </div>
 
         <button type="submit" className="btn" disabled={submitting}>
-          {submitting ? '처리 중…' : '로그인'}
+          {submitting ? '처리 중…' : '로그인하기'}
         </button>
       </form>
 

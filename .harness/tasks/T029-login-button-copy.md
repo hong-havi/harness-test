@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: planner
+current_role: frontend
 role_history: []
 run_id: run_3b4a791aaa67
 ports:
@@ -145,19 +145,36 @@ _(T029 생성 시 user 가 전달한 원 요구사항. planner 는 이 문맥을
 ---
 
 ## Implementation (Frontend)
-<frontend 작성>
+
+### 변경 파일
+- `apps/web/app/login/page.tsx` — 제출 버튼 idle 레이블 `'로그인'` → `'로그인하기'` (1줄). submitting 상태의 `'처리 중…'` 는 그대로.
 
 ### 추가 라우트/페이지
-- `/path` — 설명
+- 없음 (기존 `/login` 페이지 카피 변경만).
 
 ### 새 환경변수
-- `NEXT_PUBLIC_...`
+- 없음.
 
 ### 로컬 재현 (브라우저 시나리오)
-1. ...
+1. `docker compose up` (WEB=:3290 / API=:4290 / DB=:3335) 또는 `pnpm --filter web dev`.
+2. 브라우저로 `/login` 접속.
+3. 제출 버튼 레이블이 `로그인하기` 로 표시되는지 확인.
+4. 이메일/비밀번호 입력 후 제출 → 처리 중 버튼 레이블이 `처리 중…` 으로 바뀌는지 확인 (기존 동작 보존).
+5. Header 의 `/login` 링크 텍스트는 여전히 `로그인` 인지 확인 (범위 밖, 변경 없음).
+
+### QA 테스트 시나리오 (URL + 조작 + 기대)
+| # | URL / 조작 | 기대 결과 |
+|---|-----------|-----------|
+| 1 | `/login` 접속 | 제출 버튼 텍스트 = `로그인하기` |
+| 2 | 유효 자격증명 입력 후 제출 | 제출 중 버튼 텍스트 = `처리 중…` (기존 유지) |
+| 3 | Header 의 로그인 링크 확인 | 텍스트 = `로그인` (변경 안 됨) |
 
 ### 수용 기준 자가 검증
-- [x] ...
+- [x] `/login` 제출 버튼 텍스트가 `로그인하기` 로 표시 (코드 확인: page.tsx:84).
+- [x] 제출 중 버튼 텍스트 `처리 중…` 유지 (분기 그대로).
+- [x] Header `/login` 링크 등 다른 '로그인' 문구 미변경 (단일 파일 1줄만 수정).
+- [x] `apps/api` 하위 미변경 (frontend-only).
+- [x] `pnpm --filter web typecheck` 통과 (exit 0), `pnpm --filter web lint` 통과 (exit 0).
 
 ---
 
