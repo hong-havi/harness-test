@@ -10,7 +10,7 @@ required_roles:
   - { role: frontend,   agent: kiro }
   - { role: qa,         agent: kiro }
   - { role: reviewer,   agent: kiro }
-current_role: frontend
+current_role: qa
 role_history: []
 ports:
   web: 3280
@@ -186,24 +186,36 @@ YAGNI 원칙에 따라 신규 코드를 추가하지 않고, 현황이 요구/Ac
 ---
 
 ## QA report
-<qa 작성>
 
 ### 결과
-- 결정: pass | fail
+- 결정: **pass**
 - 일자: 2026-10-28
-- 환경: WEB=:<port>/API=:<port>/DB=:<port>
+- 환경: WEB=:3280 / API=:4280 / DB=:3334 (docker compose, harness_t028)
+- 기동: `docker compose up -d` — db(healthy)/api/web 전부 running, HTTP 200.
 
-### 수용 기준 검증
-- [x] <기준> — pass
-- [ ] <기준> — fail → 아래 참조
+### 수용 기준 검증 (런타임 렌더 기준)
+- [x] /signup 렌더 시 제출 버튼 아래 "이미 계정이 있으신가요?" 텍스트 노출 — pass
+      (렌더 HTML 에 `<p class="form-footer">이미 계정이 있으신가요? ...` 확인)
+- [x] "로그인" 링크가 `/login` 으로 이동 — pass
+      (렌더 HTML: `<a href="/login">로그인</a>`)
+- [x] 링크가 `<form>` 바깥, 제출 버튼보다 아래(DOM 순서상 form 다음) — pass
+      (바이트 인덱스 순서: 가입하기 버튼 2057 < `</form>` 2070 < `form-footer` 2087)
+- [x] 백엔드/API/DB 변경 없음 — pass
+      (`git diff --stat main...HEAD` → 변경 파일은 `.harness/tasks/T028-signup-login-link.md` 1건뿐. apps/api·apps/web 코드 무변경)
+
+### 회귀 (Regression)
+- [x] /login 페이지 대칭 링크 정상 — `GET /login` 200, 렌더 HTML 에 `href="/signup"` + `form-footer` 존재 (상호 링크 UX 일관성 확인).
+- [x] /signup 페이지 `GET` 200.
+
+### 비기능
+- 본 변경은 frontend-only 정적 문자열 링크 노출. 인증/권한/CSRF/상태코드 경로에 영향 없음 (API 무변경).
+- 고정 문자열 렌더 → XSS 벡터 없음, 민감정보 노출 없음.
 
 ### 발견 사항
-- 없음 또는
-- **[FAIL]** <요약>
-  - 재현:
-    1. ...
-  - 기대: ...
-  - 실제: ...
+- 없음 (전 항목 pass).
+
+### 비고 (환경)
+- 워크트리 `.env` 가 포트 스코프 변수만 있어 db/jwt 공통 변수가 누락 → db 컨테이너가 `MYSQL_ROOT_PASSWORD` 미설정으로 unhealthy. QA 검증을 위해 `.env` (gitignore) 에 `.env.example` 기준 공통 변수를 append 하여 기동. 이는 로컬 검증용 환경 보정이며 커밋 대상 코드에는 영향 없음.
 
 ---
 
