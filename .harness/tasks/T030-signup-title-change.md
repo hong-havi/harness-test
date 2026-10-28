@@ -4,7 +4,7 @@ title: signup-title-change
 slug: signup-title-change
 branch: task/T030-signup-title-change
 worktree: .worktrees/T030-signup-title-change
-status: planning          # planning | in-flight | paused | merged | dropped
+status: merged
 required_roles:
   - { role: planner,    agent: kiro }
   - { role: frontend,   agent: kiro }
