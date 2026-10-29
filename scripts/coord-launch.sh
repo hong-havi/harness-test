@@ -38,11 +38,20 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 
 # ─────────────────────────────────────────────────────────────
+# agent/model config 로드 — .harness/agents.conf (+ .local.conf override)
+# ─────────────────────────────────────────────────────────────
+# shellcheck disable=SC1091
+source "$MAIN_REPO_ROOT/scripts/agents-conf.sh"
+COORD_AGENT="$(conf_coordinator_agent)"
+COORD_MODEL="$(conf_coordinator_model)"
+
+# ─────────────────────────────────────────────────────────────
 # Coordinator 세션 띄우기
 # ─────────────────────────────────────────────────────────────
-info "Coordinator claude 세션 launch (main repo 위에서 상주)..."
+info "Coordinator $COORD_AGENT 세션 launch (main repo 위에서 상주, model='${COORD_MODEL:-auto}')..."
 LAUNCH="$(orca agent launch \
-  --agent claude \
+  --agent "$COORD_AGENT" \
+  ${COORD_MODEL:+--model "$COORD_MODEL"} \
   --worktree "path:$MAIN_ORCA" \
   --focus \
   --json 2>&1)"
@@ -55,17 +64,38 @@ orca terminal wait --terminal "$HANDLE" --for tui-idle --timeout-ms 20000 --json
 sleep 2
 
 # ─────────────────────────────────────────────────────────────
-# Preamble 조립
+# Preamble 조립 — 3 블록 합성:
+#   (A) generic header: 변수, 즉시 수행, ACTION 라인 매뉴얼, ACK 패턴, Slack 중계 등
+#   (B) agent-specific adapter: agents/<COORD_AGENT>/common.md + coordinator.md
+#   (C) role spec: roles/coordinator.md
 # ─────────────────────────────────────────────────────────────
-COORD_MD="$MAIN_REPO_ROOT/.harness/roles/coordinator.md"
-COORD_BODY="$(cat "$COORD_MD" 2>/dev/null || echo "(coordinator.md 없음 — WARNING)")"
+COORD_ROLE_MD="$MAIN_REPO_ROOT/.harness/roles/coordinator.md"
+AGENT_COMMON_MD="$MAIN_REPO_ROOT/.harness/agents/$COORD_AGENT/common.md"
+AGENT_COORD_MD="$MAIN_REPO_ROOT/.harness/agents/$COORD_AGENT/coordinator.md"
+
+load_or_warn() {
+  local f="$1" label="$2"
+  if [[ -f "$f" ]]; then
+    cat "$f"
+  else
+    echo "> ⚠️ $label 어댑터 파일 없음 ($f). agents.conf 의 HARNESS_COORDINATOR_AGENT='$COORD_AGENT' 와 매칭되는 .harness/agents/$COORD_AGENT/ 폴더를 작성하세요."
+  fi
+}
+
+AGENT_COMMON_BODY="$(load_or_warn "$AGENT_COMMON_MD" "agents/$COORD_AGENT/common.md")"
+AGENT_COORD_BODY="$(load_or_warn "$AGENT_COORD_MD" "agents/$COORD_AGENT/coordinator.md")"
+COORD_ROLE_BODY="$(cat "$COORD_ROLE_MD" 2>/dev/null || echo "(coordinator.md 없음 — WARNING)")"
 
 PREAMBLE="$(cat <<EOF
-# Coordinator session — task $TASK_ID
+# Coordinator session — task $TASK_ID (agent: $COORD_AGENT, model: ${COORD_MODEL:-auto})
 
-당신은 **Coordinator** 입니다. 아래 지침 전수와 변수를 받습니다. 지침대로 수행하세요.
+당신은 **Coordinator** 입니다. 아래 (A) orchestration 프로토콜 → (B) agent 어댑터 → (C) 역할 지침 순서로 지침을 받습니다. 지침대로 수행하세요.
 
-## 주입 변수
+---
+
+## (A) Orchestration 프로토콜 — agent 무관
+
+### 주입 변수
 
 - TASK_ID=$TASK_ID
 - RUN_ID=$RUN_ID
@@ -74,7 +104,7 @@ PREAMBLE="$(cat <<EOF
 - FIRST_ROLE=$FIRST_ROLE
 - USER_REQUEST=${USER_REQUEST:-see .harness/tasks/$TASK_ID-*.md}
 
-## 즉시 수행 (순서대로)
+### 즉시 수행 (순서대로)
 
 **1단계: Run bind**
 
@@ -84,114 +114,97 @@ PREAMBLE="$(cat <<EOF
 
     ./scripts/orca/worker-start.sh $TASK_ID $FIRST_ROLE "$WORKTREE_ORCA" $AGENT $RUN_ID "${USER_REQUEST//\"/\\\"}"
 
-**3단계: 메인 루프 시작** — bash tool 로 아래 하나 호출 후 반환된 payload 를 \`scripts/coord-step.sh handle\` 에 넘기세요:
+**3단계: 메인 루프** — 아래 호출 후 반환된 payload 를 \`scripts/coord-step.sh handle\` 에 넘기세요:
 
     msg_json=\$(orca orchestration check --wait \\
       --types worker_done,question,escalation,heartbeat \\
-      --timeout-ms 60000 --json)
+      --timeout-ms 600000 --json)
     ./scripts/coord-step.sh handle "\$msg_json"
 
-coord-step.sh 가 stdout 에 \`ACTION: ...\` 라인으로 다음에 할 일을 지시합니다:
-- \`ACTION: spawned T=... role=...\` → 그냥 다음 check 로 넘어가세요.
-- \`ACTION: duplicate-skipped ...\` → 이미 처리된 메시지. 그냥 다음 check.
-- \`ACTION: ask-user T=... msg='...'\` → \`orca orchestration ask --question "..."\` 로 사용자 결정 요청.
-- \`ACTION: question sender=... body='...'\` → ask 로 사용자 중계 후 \`orca orchestration reply --to <sender> --body "..."\` 로 응답.
-- \`ACTION: escalation ...\` → ask 로 사용자 긴급 알림.
-- \`ACTION: task-complete T=...\` → **메인 루프 즉시 종료 (매우 중요)**:
-    1. 사용자 응답으로 \`✅ T### 완료 — merged <sha>. Coordinator 종료.\` 한 줄만 출력
-    2. **더 이상 \`orca orchestration check\` 호출 금지**. bash tool 호출 자체를 중단.
-    3. 다음 사용자 지시 대기 (추가 작업 없이 세션 유휴 상태).
-    4. 사용자가 명시적으로 추가 지시하기 전까지는 아무것도 하지 말 것.
-    ⚠️ task-complete 는 "선택적 종료" 가 아니라 **반드시 종료** 신호입니다. 계속 check 돌리면 리소스 낭비 + 다음 task 와 혼선.
-- \`ACTION: heartbeat\` 또는 응답 없음 → 그냥 다시 check.
-- \`ACTION: ack delivery=<delivery_id>\` → **매우 중요**. 다음 check 호출에 반드시 \`--ack <delivery_id>\` 를 포함하세요. 안 하면 Orca 가 60초마다 같은 메시지를 재배포하고 큐가 막혀 다음 worker_done 을 받지 못합니다.
+> timeout 600000ms (10분) 은 빈 timeout 턴 비용을 줄이기 위함. 메시지 즉시 수신 시 바로 반환.
 
-## ⚠️ ACK 패턴 (반드시 지킬 것)
+### ACTION 라인 매뉴얼
 
-coord-step.sh 는 각 메시지 처리 후 보통 **마지막 라인에 \`ACTION: ack delivery=<id>\`** 를 출력합니다. **다음 check 호출에 그 id 를 반드시 포함** 하세요:
+coord-step.sh 가 stdout 에 \`ACTION: ...\` 로 다음 할 일을 지시:
+- \`ACTION: spawned T=... role=...\` → 그냥 다음 check.
+- \`ACTION: duplicate-skipped ...\` → 이미 처리된 메시지. 다음 check.
+- \`ACTION: ask-user T=... msg='...'\` → Slack 포스트로 사용자 중계 (아래 Slack 중계 참조).
+- \`ACTION: question sender=... body='...'\` → Slack 포스트 후 사용자 응답을 \`orca orchestration reply --to <sender> --body "..."\` 로 worker 에 전달.
+- \`ACTION: escalation ...\` → Slack 포스트로 긴급 알림.
+- \`ACTION: task-complete T=...\` → **메인 루프 즉시 종료**:
+    1. "✅ T### 완료 — merged <sha>. Coordinator 종료." 한 줄 출력
+    2. **더 이상 \`orca orchestration check\` 호출 금지**. shell 호출 자체 중단.
+    3. 다음 사용자 지시 대기 (추가 작업 없이 유휴).
+    ⚠️ task-complete 는 반드시 종료 신호. 계속 check 돌리면 리소스 낭비 + 다음 task 와 혼선.
+- \`ACTION: heartbeat\` 또는 응답 없음 → 다시 check.
+- \`ACTION: ack delivery=<delivery_id>\` → **다음 check 호출에 반드시 \`--ack <delivery_id>\` 포함**. 안 하면 Orca 가 같은 메시지 재배포, 큐 교착.
 
-    # 이번 턴 끝에 받은 delivery_id 를 변수에 저장
+### ACK 패턴
+
+각 메시지 처리 후 coord-step.sh 가 보통 마지막 라인에 \`ACTION: ack delivery=<id>\` 출력. **다음 check 호출에 그 id 포함**:
+
     LAST_ACK=\$(./scripts/coord-step.sh handle "\$msg_json" | tee /dev/stderr | awk -F'=' '/^ACTION: ack delivery=/{print \$2}')
 
-    # 다음 check 호출에 --ack 포함
     msg_json=\$(orca orchestration check --wait --ack "\$LAST_ACK" \\
       --types worker_done,question,escalation,heartbeat \\
-      --timeout-ms 60000 --json)
+      --timeout-ms 600000 --json)
 
-ack 하지 않으면 **planner succeeded 가 영원히 재배포되어 architect worker_done 이 큐에 밀려 처리 불가** 등의 교착 발생.
+ack 생략 시 planner succeeded 가 영원히 재배포되어 architect worker_done 이 큐에 밀려 처리 불가.
 
-**이 루프를 모든 required_roles 완료까지 반복합니다. \`task-complete\` 받으면 루프 즉시 종료.**
+### Coordinator 는 \`ask\` 호출 금지
 
-## ⚠️ Shell 명령에 \`bash\` 접두어 금지
+\`orca orchestration ask\` 는 supervised Dispatch 전용. Coordinator (= Run owner) 는 Dispatch 가 아니므로 \`supervised Dispatch 필요\` 에러.
 
-하네스 스크립트 호출 시 **절대 \`bash\` 를 명시하지 마세요**:
-
-- ❌ \`bash ./scripts/chat.sh append ...\`     → Windows 에서 WSL /bin/bash 로 fallback → \`No such file or directory\` 실패
-- ❌ \`bash scripts/orca/worker-start.sh ...\`
-- ✅ \`./scripts/chat.sh append ...\`          → shebang \`#!/usr/bin/env bash\` 가 자동으로 git-bash 로 라우팅
-- ✅ \`./scripts/orca/worker-start.sh ...\`
-- ✅ \`orca orchestration send ...\`           → orca 자체는 bash 필요 없음
-
-이 패턴은 T022 planner, T025 qa 에서 반복 발생한 결함입니다. kiro-cli 환경에서 특히 자주 터지지만, 어떤 agent 든 shell 명령 호출 시 \`bash\` 접두어 쓰지 말 것.
-
-## ⚠️ Coordinator 는 \`ask\` 호출 금지
-
-\`orca orchestration ask\` 는 **supervised Dispatch 안의 worker 만** 호출 가능합니다. Coordinator (= Run owner) 는 Dispatch 가 아니므로 \`ask\` 호출 시 \`supervised Dispatch 필요\` 에러.
-
-**worker question 수신 시 중계 흐름**:
-1. coord-step.sh 가 자동으로 Slack 에 \`🔔 응답 필요 — T### <본문>\` 포스트 (handle_question 내장).
-2. 사용자가 Slack 스레드에 응답 → relay.sh 가 받아 Coordinator 세션에 \`terminal send\` 로 주입.
-3. Coordinator (= 당신) 는 그 응답을 worker 에 \`reply\` 로 전달:
+**worker question 중계 흐름**:
+1. coord-step.sh 가 자동으로 Slack 에 \`🔔 응답 필요 — T### <본문>\` 포스트.
+2. 사용자 Slack 스레드 응답 → relay.sh 가 Coordinator 세션에 주입.
+3. 당신이 그 응답을 worker 에 reply:
 
        orca orchestration reply --to <sender_dispatch_id> --body "<사용자 응답>" --json
 
-\`sender_dispatch_id\` 는 ACTION: question 라인의 \`sender=\` 값. 또는 msg_json 의 \`senderId\` 필드.
+### Slack 중계 (사용자에게 질문 / task 완료 알림)
 
-**사용자에게 질문해야 하는 경우 (worker 가 아니라 Coordinator 가)**: \`ask\` 대신 **반드시 task 스레드 안으로 Slack 포스트**:
+Coordinator 가 사용자에게 직접 질문하거나 task 완료를 알릴 때 **반드시 task 스레드 안에**:
 
     "$MAIN_REPO_ROOT/scripts/slack/send.sh" \\
-      --text "질문 내용 ..." \\
+      --text "..." \\
       --thread "\$(cat $MAIN_REPO_ROOT/.harness/chat/$TASK_ID.slack)"
 
-❌ \`--thread\` 생략 **절대 금지**. 신규 메시지로 올라가 사용자가 어떤 task 의 질문인지 추적 못 함. 스레드 하나에 모든 bot 메시지 모여야 가독성 유지.
+❌ \`--thread\` 생략 금지 — task 식별 불가.
 
-그리고 사용자 응답 대기 — relay 가 받아 당신 세션에 주입.
-
-## ✅ task-complete 완료 알림 (Phase 4 O)
-
-\`ACTION: task-complete T=$TASK_ID\` 받으면 **반드시 Slack 스레드에 완료 포스트** 후 메인 루프 종료:
+task-complete 수신 시 메인 루프 종료 **전** 아래 포스트:
 
     "$MAIN_REPO_ROOT/scripts/slack/send.sh" \\
       --text "✅ *$TASK_ID* 완료 — merged. 모든 role 소진, Coordinator 종료." \\
       --thread "\$(cat $MAIN_REPO_ROOT/.harness/chat/$TASK_ID.slack)"
 
-사용자가 Slack 에서 task 완료 신호를 받아야 추후 조치 (follow-up task, 운영 공유) 가능.
+### 단일 소비자 원칙 (중복 spawn 방지)
 
-## ⚠️ 매우 중요 — 단일 소비자 원칙 (중복 spawn 방지)
+Orca orchestration 메시지 큐는 **단일 소비자** 모델. 두 흐름이 동시에 check 호출하면 메시지 양쪽 전달 → worker-start 중복 (실측: architect 2개, frontend 3개).
 
-Orca orchestration 메시지 큐는 **단일 소비자** 모델을 전제합니다. 두 흐름이 동시에 check 호출하면 메시지가 **양쪽 모두에 전달되거나 재배포되어** worker-start 가 중복 호출됩니다 (실제로 발생함: architect/frontend kiro 세션이 2-3개씩 뜸).
+**원칙** (agent 무관):
+- 메인 흐름 1개의 \`check --wait\` 블록킹 호출만.
+- 같은 Run 에 동시 두 번 check 금지.
+- 메인 루프 밖 추가 check 금지 (ack 확인용 포함).
+- ack 는 다음 \`check\` 에 \`--ack\` 로 포함.
 
-**금지사항** (반드시 지킬 것):
+**구체 금지 수단은 agent 마다 다름 → 아래 (B) agent 어댑터 참조**.
 
-1. **Monitor tool 사용 금지** — Claude Code 의 Monitor 로 \`orca orchestration check\` 를 백그라운드 polling 하지 마세요. 메인 흐름에서 하나의 \`check --wait\` 호출만 사용.
-2. **\`run_in_background: true\` 로 check 호출 금지** — 메인 흐름 블록킹 호출만.
-3. **같은 Run 에 대해 동시에 두 번 check 호출 금지** — 하나 끝나면 다음 하나.
-4. **ack 는 매 check 호출에 포함** — \`check --ack <delivery_id>\` 로 즉시 ack 하거나, 다음 check 호출 시 \`--ack <prev_delivery_id>\` 로 처리. 지연 ack 하면 재배포됨.
+coord-step.sh 가 dispatch_id idempotency 로 2차 방어하지만, 동시 호출 자체를 피하는 게 1차 방어.
 
-**올바른 메인 루프 패턴 1건만**:
+---
 
-    while true:
-      msg_json=\$(orca orchestration check --wait \\
-        --types worker_done,question,escalation,heartbeat \\
-        --timeout-ms 60000 --json)
-      ./scripts/coord-step.sh handle "\$msg_json"
-      # (ack 는 check --wait 가 자동으로 수행하거나 다음 호출에서 --ack 포함)
+## (B) Agent 어댑터 — $COORD_AGENT 특유
 
-**중복 방지 가드도 코드에 있음**: coord-step.sh 가 dispatch_id 를 \`.harness/chat/<task>.processed-dispatches\` 에 기록해 같은 메시지가 재전달돼도 \`ACTION: duplicate-skipped\` 로 안전하게 skip. 하지만 **애초에 Monitor 를 안 띄우는 게 1차 방어선**.
+$AGENT_COMMON_BODY
 
-## 전체 Coordinator 지침 (참고)
+$AGENT_COORD_BODY
 
-$COORD_BODY
+---
+
+## (C) 역할 지침 — Coordinator
+
+$COORD_ROLE_BODY
 EOF
 )"
 
@@ -206,7 +219,7 @@ orca terminal send --terminal "$HANDLE" --text "$PREAMBLE" --enter --wait-submit
 # handles 에 coord 세션 기록
 # ─────────────────────────────────────────────────────────────
 mkdir -p "$MAIN_REPO_ROOT/.harness/chat"
-echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"coordinator\",\"agent\":\"claude\",\"handle\":\"$HANDLE\",\"run_id\":\"$RUN_ID\",\"task_id\":\"\",\"dispatch_id\":\"\"}" \
+echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"coordinator\",\"agent\":\"$COORD_AGENT\",\"model\":\"${COORD_MODEL:-auto}\",\"handle\":\"$HANDLE\",\"run_id\":\"$RUN_ID\",\"task_id\":\"\",\"dispatch_id\":\"\"}" \
   >> "$MAIN_REPO_ROOT/.harness/chat/$TASK_ID.handles"
 
 info "✓ Coordinator 세션 띄움 (handle=$HANDLE). Auto-mode 로 루프 수행 중."

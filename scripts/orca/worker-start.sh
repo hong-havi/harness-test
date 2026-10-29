@@ -35,6 +35,14 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 info() { echo "→ $*"; }
 
 # ─────────────────────────────────────────────────────────────
+# agent/model config 로드 — ROLE 별 model lookup
+# ─────────────────────────────────────────────────────────────
+# shellcheck disable=SC1091
+source "$MAIN_REPO_ROOT/scripts/agents-conf.sh"
+AGENT_MODEL="$(conf_model_for "$ROLE")"
+# AGENT_MODEL 이 빈 문자열이면 'auto' → --model flag 미전달
+
+# ─────────────────────────────────────────────────────────────
 # spec 작성 — role.md + user request + bootstrap-prompt 종합
 # ─────────────────────────────────────────────────────────────
 build_spec() {
@@ -77,7 +85,7 @@ fi
 HANDLE=""
 
 if is_native_agent "$AGENT"; then
-  info "worker-start --agent $AGENT ..."
+  info "worker-start --agent $AGENT model='${AGENT_MODEL:-auto}' ..."
   SPEC="$(build_spec)"
   # worker-start 는 Spec 을 argv 또는 stdin 으로 받음. 긴 spec 이므로 argv 는 Windows argv 제한 걸릴 수 있어
   # 임시 파일 경유 — orca 는 --spec <text> argv 받으므로 그대로 전달 (Linux/Windows 모두 가능).
@@ -86,6 +94,7 @@ if is_native_agent "$AGENT"; then
     --spec "$SPEC" \
     --worktree "path:$WORKTREE_ORCA" \
     --agent "$AGENT" \
+    ${AGENT_MODEL:+--model "$AGENT_MODEL"} \
     --task-title "$TASK_ID: $ROLE" \
     --timeout-ms 60000 \
     --json 2>&1)"
@@ -93,9 +102,10 @@ if is_native_agent "$AGENT"; then
   HANDLE="$(echo "$RESPONSE" | awk -F'"' '/"handle":/{print $4; exit}')"
 else
   # kiro 등 비네이티브 — 터미널 띄우고 preamble 주입
-  info "비네이티브 agent ($AGENT) — orca agent launch + preamble 주입"
+  info "비네이티브 agent ($AGENT) — orca agent launch + preamble 주입 (model='${AGENT_MODEL:-auto}')"
   LAUNCH="$(orca agent launch \
     --agent "$AGENT" \
+    ${AGENT_MODEL:+--model "$AGENT_MODEL"} \
     --worktree "path:$WORKTREE_ORCA" \
     --focus \
     --json 2>&1)"
@@ -154,6 +164,6 @@ fi
 
 # handles 기록 — dispatch_id/task_id 포함 (Coordinator lookup 용)
 mkdir -p "$MAIN_REPO_ROOT/.harness/chat"
-echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"$ROLE\",\"agent\":\"$AGENT\",\"handle\":\"$HANDLE\",\"run_id\":\"$RUN_ID\",\"task_id\":\"${orch_task_id:-}\",\"dispatch_id\":\"${orch_dispatch_id:-}\"}" \
+echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"role\":\"$ROLE\",\"agent\":\"$AGENT\",\"model\":\"${AGENT_MODEL:-auto}\",\"handle\":\"$HANDLE\",\"run_id\":\"$RUN_ID\",\"task_id\":\"${orch_task_id:-}\",\"dispatch_id\":\"${orch_dispatch_id:-}\"}" \
   >> "$MAIN_REPO_ROOT/.harness/chat/${TASK_ID}.handles"
 echo "✓ worker 시작 완료 ($ROLE / $AGENT), handle=$HANDLE"

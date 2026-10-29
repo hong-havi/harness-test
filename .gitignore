@@ -9,6 +9,9 @@
 .env.*
 !.env.example
 
+# ─── Harness: 사용자별 agent/model override ──────────────
+.harness/agents.local.conf
+
 # ─── Node / pnpm ─────────────────────────────────────────
 node_modules/
 .pnpm-store/

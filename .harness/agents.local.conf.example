@@ -1,0 +1,20 @@
+# .harness/agents.local.conf.example — 사용자별 override 템플릿
+#
+# 사용법:
+#   cp .harness/agents.local.conf.example .harness/agents.local.conf
+#   # 아래 변수 중 원하는 것만 설정. 커밋되지 않음 (gitignore).
+#
+# agents.conf 보다 **나중에** source 되므로 여기 값이 우선.
+
+# 예시 1: Coordinator 를 Opus 로 되돌리기 (복잡한 체인에서 품질 우선)
+# HARNESS_COORDINATOR_MODEL=claude-opus-4-5
+
+# 예시 2: 특정 역할만 claude 로 (reasoning 집약)
+# HARNESS_ARCHITECT_AGENT=claude
+# HARNESS_ARCHITECT_MODEL=claude-sonnet-4-5
+# HARNESS_REVIEWER_AGENT=claude
+# HARNESS_REVIEWER_MODEL=claude-sonnet-4-5
+
+# 예시 3: default 를 codex 로 바꿔 모든 worker 를 codex 로
+# HARNESS_DEFAULT_AGENT=codex
+# HARNESS_DEFAULT_MODEL=auto

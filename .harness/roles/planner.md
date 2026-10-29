@@ -21,11 +21,29 @@ coordinator로부터 받은 요구를 **구현 가능한 명세**로 바꾸고, 
    - **Why** — 왜 필요한가 (사용자 가치/기술 이유)
    - **What** — 무엇을 바꾸는가 (결과물 기준)
    - **Scope** — 포함/제외 명시
-2. **required_roles 결정**:
-   - 거의 항상 포함: `planner`, `architect`, `backend` 또는 `frontend` 중 하나 이상, `qa`, `reviewer`
-   - UI 변경 있으면: `designer`, `frontend` 추가
-   - DB 스키마 변경 있으면: `backend` 반드시
-   - 각 역할의 agent 매핑도 함께 선언 (기본 `claude`)
+2. **required_roles 결정** — **먼저 변경 규모를 분류**해서 체인 길이를 결정하라:
+
+   **(A) Trivial 변경** — 아래 중 하나라도 해당:
+   - 단일 파일 ≤ 20 라인 수정
+   - UI 텍스트 / label / 색상 / 간격 등 presentation only
+   - 설정값(상수, env default) 수정
+   - 오타·주석 수정
+   - dependency 버전 bump 1개
+   → **최소 체인**: `[planner, frontend 또는 backend 중 1개, reviewer]`
+   → architect / qa / designer **생략** 가능. reviewer 가 품질 catch.
+
+   **(B) Standard 변경** — 아래 중 하나라도 해당:
+   - 새 API 엔드포인트 / 엔티티 / 스키마
+   - 2+ 파일 수정, 또는 20라인 초과
+   - UI 신규 컴포넌트 / 레이아웃 변경
+   - 보안·인증 로직 touch
+   → **표준 체인**: `planner, architect, backend 또는 frontend 중 하나 이상, qa, reviewer`
+   → UI 신규면 `designer`, `frontend` 추가. DB 스키마 변경이면 `backend` 필수.
+
+   어느 쪽인지 **task.md 의 Plan 섹션 상단에 명시** (예: `Scope: trivial — reviewer 가 품질 담당`).
+   판단이 애매하면 Standard 로 간다 (reviewer 가 되돌릴 수 있음).
+
+   - 각 역할의 agent 매핑도 함께 선언 (기본값은 `.harness/agents.conf` 의 `HARNESS_DEFAULT_AGENT`)
 3. **수용 기준** 작성 — 측정 가능하고 체크 가능한 bullet.
 4. **예상 파일 목록** — 변경될 수 있지만 가이드로 제공.
 5. **의존**(blocked_by) — 다른 task가 선행되어야 하면 명시.
