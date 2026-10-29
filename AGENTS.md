@@ -4,7 +4,7 @@
 - 간단한 게시판 (회원 + 게시판 모듈). 상세 스펙은 `PRD.md`.
 - 스택: Next.js (apps/web) + NestJS (apps/api) + MySQL, TypeORM, JWT(HttpOnly 쿠키), pnpm 모노레포, Docker Compose.
 
-## 하네스 (Phase 4 L 기준)
+## 하네스 (Phase 4 S++ 기준)
 
 **이 리포는 Orca orchestration 기반 멀티-에이전트 하네스로 운영됩니다.** 자세한 운영 규칙·명령어·역할 지침은 다음 문서를 참조하세요:
 

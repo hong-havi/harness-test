@@ -6,7 +6,7 @@
 - 스택: Next.js(`apps/web`) + NestJS(`apps/api`) + MySQL 8, TypeORM, JWT(HttpOnly 쿠키), pnpm 모노레포, Docker Compose
 - 로컬 전용 운영 (docker compose)
 
-## 하네스 (Phase 4 L 기준)
+## 하네스 (Phase 4 S++ 기준)
 
 이 리포는 **task-per-worktree + 7-role 하네스 + Orca orchestration** 으로 운영합니다.
 

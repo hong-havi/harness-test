@@ -2,18 +2,24 @@
 
 하네스 재구축 계획 문서. 중단되어도 이 문서만 읽으면 이어 짓도록 작성.
 
-## 현재 상태 (2026-10-27)
+## 현재 상태 (2026-10-29)
 
-**Phase 1 ~ Phase 5 모두 완료**. Phase 4 는 B 재설계 + C/D 확장으로 수렴됨.
+**Phase 1 ~ Phase 5 + Phase 4 A~S++ 반복 fix 완료**. Phase 4 는 B 재설계 + C/D/E 확장 + end-to-end 검증 중 발견한 결함 fix 반복으로 수렴.
 
 - **Phase 4 B (설계 전환)**: Coordinator = 전용 claude agent 세션. bash 데몬 폐기 (Orca Run bind 가 세션 단위라 bash 로 유지 불가).
 - **Phase 4 C**: Slack → Coordinator 중계 relay 데몬.
 - **Phase 4 D**: Slack 메타 명령 (`new / drop / status / help / list`).
+- **Phase 4 E**: 크로스 플랫폼 자동 시작 등록 (`relay.sh install`).
+- **Phase 4 F**: Slack 스레드 reply 지원 + reviewer 승인 요청 자동 포스트.
+- **Phase 4 G ~ S++**: end-to-end 검증 반복 중 발견한 결함 (ask 플래그 / body 추출 / 중복 포스트 / worktree task.md / Windows pnpm symlink / amend 결함 등) 전부 fix.
 - **Phase 5**: 관측 (`harness-status.sh` 1-shot).
 
-바로 쓰고 싶으면 **§5 명령어 레퍼런스 (Phase 4 D 기준)** 부터.
+바로 쓰고 싶으면 **§5 명령어 레퍼런스** 부터.
 
-end-to-end 검증 완료: **T019 me-created-date** (planner → frontend → qa → reviewer → user 승인 → merge, 사람 개입 1회 "merge" 응답).
+end-to-end 검증:
+- **T019 me-created-date** (초기 성공) — planner → frontend → qa → reviewer → user 승인 → merge, 사람 개입 1회
+- **T025 me-welcome-msg** — Phase 4 F/G/H 전수 작동
+- **T030 signup-title-change** — Phase 4 S+ amend 제거 결정적 검증 (rebase add/add conflict 안 생김)
 
 ---
 
@@ -438,6 +444,113 @@ relay 가 처리하는 메타 명령 범위 확장:
   - 기존 Coordinator 세션 close 후 `coord-launch.sh` 재호출
   - processed-dispatches 는 유지 → idempotency 가드가 재배포 메시지 skip
 
+### Phase 4 E — 크로스 플랫폼 자동 시작 (`e6f120b`)
+
+`relay.sh install` / `uninstall` — OS 감지 (Windows=Task Scheduler, macOS=launchd, Linux=systemd user). git-bash 경로 자동 감지 + `scripts/slack/relay-start.bat` wrapper.
+
+### Phase 4 F — Slack 스레드 reply 지원 + reviewer 승인 자동 포스트 (`6deb587`)
+
+- `relay.sh run_once` 가 `.harness/chat/<id>.slack` 의 thread_ts 로 **각 task 스레드도 polling** — 사용자가 스레드 reply 로 `merge` 보내면 자동 인식.
+- `coord-step.sh handle_question` 에 Slack 자동 포스트 + sender → task-id 역매핑.
+
+### Phase 4 G — Coordinator ask 공백 + body 추출 다중 fallback (`e238d4d`)
+
+- `ask --body` → `--question` 플래그 교정.
+- **Coordinator = Run owner 라 ask 호출 불가** (supervised Dispatch 필요) 발견. preamble 에 명시 + Slack 포스트 패턴.
+- `extract_body()` 다중 fallback: body / question / text / message / content / prompt / payload 전체.
+
+### Phase 4 H — Slack 포스트 스레드 강제 + merge 완료 알림 (`5d7d885`)
+
+- `post_slack_question` 이 `.harness/chat/<id>.slack` 의 thread_ts 를 **반드시 `--thread`** 로 전달 (신규 메시지로 올라가는 결함).
+- `coord-step.sh` task-complete 분기에 명시적 Slack 완료 포스트.
+
+### Phase 4 I — reviewer.md ask 플래그 교정 (`7409852`)
+
+reviewer kiro 가 role.md 지시대로 `ask --from <file>` 호출 → `Choose exactly one of --question or --resume` 에러. `--question "..." --options "..." --timeout-ms` 로 교정.
+
+### Phase 4 J — role.md 전수 교정 + drop cleanup + install fallback (`025b09b`)
+
+- `coordinator.md` reply `--to` → `--id`, ask 금지 명시.
+- `tasks.sh drop` 가 `.slack` / `.role-history.jsonl` 도 archive 로.
+- `relay.sh install_windows` 실패 시 PowerShell 수동 명령 안내.
+
+### Phase 4 J+ / K — install 간소화 + relay 자동 보장 (`2a7ae7f`, `0768907`)
+
+- `scripts/slack/relay-start.bat` wrapper → schtasks `/tr` 간소화.
+- **relay 상시 상주 폐기** — `tasks.sh new` 가 자동 start (Orca 꺼져있으면 relay 쓸모 없음).
+
+### Phase 4 L — Legacy cleanup + 문서 전면 업데이트 (`8bc1445`, `46204e0`)
+
+Phase 3 어댑터 삭제: `scripts/orca/spawn.sh`, `scripts/agents/{claude,codex,kiro}.sh` (-299줄). `tasks.sh cmd_advance` 함수 전체 삭제. README/CLAUDE/`.harness/README` Phase 4 B/C/D/E 반영.
+
+### Phase 4 M — UX 개선 (`6b22211`)
+
+- `chat.sh send-coord <task-id> <message...>` — Coordinator 세션 수동 inject 간소화.
+- `@bot rework T### <role>` — Slack 에서 rework 지시.
+- `@bot new` 응답에 Coordinator Orca 세션 handle 포함.
+
+### Phase 4 N / N+ — setup.sh + relay start exit 1 중단 방지 (`cf10cb2`)
+
+- `scripts/setup.sh` 신규 — 신규 PC 1-step 셋업 (의존성 체크, `.env` 복사, Orca setup, pnpm install, relay install).
+- `tasks.sh cmd_new` 안 relay 보장 로직에 `|| true` 추가 (status 체크 실패 시 체인 중단 방지).
+
+### Phase 4 O — 3 결함 fix (`273f5b7`)
+
+T025 end-to-end 중 발견:
+1. `coord-step.sh extract_type()` 다중 fallback (type / messageType / kind / nested).
+2. task-complete 분기 자동 archive (reviewer 가 `tasks.sh merge` 중단 시 2차 방어).
+3. `coord-launch.sh` preamble + `_bootstrap-prompt.sh` 에 **"bash 접두어 절대 금지"** (kiro WSL fallback 결함).
+
+### Phase 4 P — Slack 포스트 스레드 강제 + merge 완료 알림 (`5d7d885`)
+
+- preamble: Slack 포스트 시 `--thread "$(cat ...slack)"` **반드시** 포함.
+- `coord-step.sh` task-complete 에 자동 Slack 완료 포스트 (`✅ T### merged (sha)`).
+
+### Phase 4 P+ — timeout 응답 unknown fallback 발동 안 함 (`fd643ed`)
+
+T026 재검증 중 발견: Phase 4 O 의 unknown fallback 이 `check --wait` timeout 응답 (`timedOut: true`, `messages: []`) 도 Slack 포스트 → 노이즈. Fix: `timedOut` / `count:0` / `_keepalive` 선 체크 → skip.
+
+### Phase 4 Q — 질문을 반드시 task 스레드 안으로 (`5e0b996`)
+
+T026 재발: `ask` 가 신규 Slack 메시지로 올라가고 사용자 스레드 응답 못 받음.
+- `_bootstrap-prompt.sh` 2단계 필수: `chat.sh append question` (스레드 미러) → `orca orchestration ask` (blocking).
+- `coord-step.sh post_slack_question` thread_ts fallback 강화.
+
+### Phase 4 Q+ — 스레드 polling always + 중복 포스트 방지 (`f282798`)
+
+T027 결정적 결함:
+1. `relay.sh run_once` 의 `[[ -z $msgs ]] && return 0` 이 **스레드 polling 까지 skip**. 채널 상위 메시지 없으면 스레드도 안 돎. 사용자 스레드 reply 만 보냈을 때 영원히 못 받음. Fix: msgs 비어도 스레드 polling 계속.
+2. `coord-step.sh handle_question` 중복 포스트 방지: 최근 chat log 에 question 있으면 skip.
+
+### Phase 4 R — 3 결함 fix (`14ff0bd`)
+
+T027 반복 결함:
+1. **worktree 에 task.md 없음**: `tasks.sh cmd_new` 순서 교정 — task.md 커밋 → worktree add (반대 순서 → worktree HEAD < main HEAD → worker 가 못 봄).
+2. **Coordinator 자동 close**: `coord-step.sh` task-complete 분기에서 5초 뒤 `orca terminal close` 자동 호출.
+3. **worker 가 main 에서 작업**: `_bootstrap-prompt.sh` 에 "worktree 로 cd 안전망" 지시.
+
+### Phase 4 S — worktree 강제 삭제 + merge 완료 Slack + 중복 응답필요 폐기 (`eef3629`)
+
+사용자 피드백 4개 fix:
+1. `tasks.sh merge/drop` 가 `git worktree remove` 뒤에 **반드시 `rm -rf` + `git worktree prune`** (Windows pnpm symlink 로 실패해도 재시도).
+2. `tasks.sh merge` 끝에 **직접** Slack 포스트 — Coordinator 의존 X.
+3. `coord-step.sh handle_question` Slack 포스트 **완전 폐기** — worker chat.sh question 이 미러 담당. 중복 "응답 필요" 노이즈 제거.
+4. 양식 개선 (3 으로 자동 해결).
+
+### Phase 4 S+ — User Request commit 전 삽입 (amend 제거) (`cd4734b`)
+
+**T029 결정적 결함**: `tasks.sh cmd_new` 가 commit → worktree add → amend 순서 → amend 가 main HEAD 바꿔서 branch 는 amend 전 SHA 참조 → rebase 때 **add/add conflict**. Fix: User Request awk 를 commit 이전으로 이동. amend 완전 제거. **T030 재검증 성공** (SHA 동일 확인).
+
+### Phase 4 S++ — Windows pnpm symlink cmd rmdir (`cd4734b` 안)
+
+Windows 에서 `rm -rf` 로 `node_modules/.pnpm/@swc+helpers/...` 심볼릭 링크 삭제 실패 (`Permission denied`). Fix: `cmd //c "rmdir /S /Q <win-path>"` delegate. 그래도 안 되면 `PowerShell Remove-Item` 수동 안내 (완전 해결 안 됨, 사용자 조치 필요).
+
+### 알려진 미해결 결함 (Phase 4 T 후보)
+
+1. **kiro qa Windows dev server 실패 → 반복 멈춤** (T027/T028/T030): qa role.md 에 "docker/dev server 실패 시 lint/build fallback" 명시 필요.
+2. **Windows pnpm symlink 완전 자동 cleanup 불가**: `pnpm store prune` 또는 사용자 PowerShell 수동.
+3. **reviewer `tasks.sh merge` 중간 멈춤**: Windows shell output capture 이슈로 반복 재시도. role.md 보강 또는 환경 fix.
+
 ### Phase 5 — 관측 레이어 (2026-10-27 완료)
 
 - `scripts/harness-status.sh` 신규 — 전체 하네스 상태 1-shot:
@@ -451,7 +564,7 @@ relay 가 처리하는 메타 명령 범위 확장:
 
 ---
 
-## 5. 명령어 레퍼런스 (Phase 4 D 기준)
+## 5. 명령어 레퍼런스 (Phase 4 S++ 기준)
 
 ### 터미널 (운영)
 

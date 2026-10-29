@@ -1,6 +1,6 @@
 # Harness
 
-멀티 task · 멀티 에이전트 하네스. **Phase 4 L 기준** — Orca orchestration + 전용 Coordinator claude agent 세션.
+멀티 task · 멀티 에이전트 하네스. **Phase 4 S++ 기준** — Orca orchestration + 전용 Coordinator claude agent 세션.
 
 전체 설계와 Phase 분할은 [`WORKPLAN.md`](./WORKPLAN.md), 운영 규칙은 [`COORDINATOR.md`](./COORDINATOR.md) 참조.
 
