@@ -119,6 +119,29 @@ task-per-worktree + 7-role + Orca orchestration 하네스를 **다른 프로젝�
 3. **다음 주 (Tier 2)**: 6 → 4 순서. 5 는 Slack 사용 빈도 평가 후.
 4. **복제 시점**: Tier 1 적용 상태 + Tier 3-8 criteria 를 복제 대상 프로젝트에 맞게 정립.
 
+---
+
+## Tier 1 Pilot 결과 (2026-10-29)
+
+**시도**: `.harness/agents.conf` + `scripts/agents-conf.sh` + agent 어댑터 폴더 + `coord-launch.sh` / `worker-start.sh` / `_bootstrap-prompt.sh` / `roles/*.md` 수정으로 Tier 1 전부 적용 후 live E2E 2회.
+
+- **T031** (Tier 1 적용 상태, Coordinator claude model=auto, worker=kiro): Coordinator 는 뜸, 하지만 **kiro planner worker-start 가 `agent_unconfigured` 에러로 3회 실패**. 체인 진전 못함. drop.
+- **T032** (Tier 1 revert, baseline): **kiro planner worker-start 성공**. 재현 안 됨.
+
+**진단**: Tier 1 변경 중 하나가 `scripts/orca/worker-start.sh` 의 kiro 비네이티브 경로(`orca orchestration worker-start --terminal <handle>`)를 깼음. 환경 결함 아님. 유력 용의자:
+- #1 파일 상단 `source agents-conf.sh` 가 환경변수 세팅
+- #2 `AGENT_MODEL="$(conf_model_for "$ROLE")"` 호출
+- #3 `orca agent launch` 에 `${AGENT_MODEL:+--model "$AGENT_MODEL"}` 추가 (bash backslash continuation 사이 공백 토큰 영향 가능성)
+
+**결정**: 안전을 위해 scripts/roles 5 파일을 pre-Tier-1 로 **rollback 커밋**. config 파일 / adapters / loader (`agents.conf`, `.harness/agents/*/*.md`, `agents-conf.sh`, `agents.local.conf.example`) 는 **dormant 상태로 유지** — 재접속 시 사용 가능.
+
+## 다음 세션 TODO
+
+1. **Bisect**: kiro branch 에서 `${AGENT_MODEL:+...}` 만 제거 → test. 성공하면 범인 확정. 실패하면 `source agents-conf.sh` 도 제거 → test.
+2. **보수적 fix 대안**: `--model` flag 를 native agent 분기에만 적용. kiro 는 자체 config 사용 (Orca 설계상 자연스러움).
+3. **독립 fix**: `tasks.sh drop` 이 ambient uncommitted 파일을 자기 commit 에 흡수하는 버그 (추정 `git add -A`). T031 drop 때 Tier 1 untracked 파일 전부가 drop commit 에 섞여 올라감. 다른 프로젝트에도 복제하면 **의도 안 한 파일이 task commit 에 섞임**. 심각도 높음.
+4. **model ID 검증**: `claude-sonnet-4-5` 가 Orca 환경에서 유효한지 (Tier 1 pilot step B).
+
 ## 미해결 선결 과제 (복제 전 반드시)
 
 `WORKPLAN.md:548-552` 미해결 Windows 전용 결함 3건은 **복제 대상이 Windows 가 아니면 재현 안 됨**. 하지만 macOS/Linux 는 **새로운 결함 세트** 등장 확률 높음:
